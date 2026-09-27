@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { groundAt } from '../plan/ground.js';
 import { MB, rgb } from './mb.js';
+import { phaseOf } from '../plan/network.js';
 
 const RANK = { alley: 0, street: 1, old: 2, collector: 3, arterial: 4, national: 5 };
 const CYCLE = 64, GREEN = 26, AMBER = 3, FLASH = 5;      // s; the cross road gets the second half; the walk light blinks for its last 5 s
@@ -25,7 +26,7 @@ export class Signals {
       this.byNode.set(nd.id, J);
       for (const a of nd.arms) {
         if (!a.crosswalk) continue;
-        const group = a.way === major ? 0 : 1;
+        const group = phaseOf(a.way, major);
         const P = (t, d) => [nd.x + a.ux * t - a.uz * d, nd.z + a.uz * t + a.ux * d];
         const rotU = Math.atan2(a.ux, a.uz);                                 // local +z → the arm's direction u
         // vehicle signal: pole on the incoming side (+n), arm over the lanes, head facing the traffic (+u)

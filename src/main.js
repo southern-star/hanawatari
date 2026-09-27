@@ -15,11 +15,11 @@ import { LevelCrossings } from './city/fumikiri.js';
 import { Signals } from './city/signals.js';
 import { Traffic } from './city/traffic.js';
 import { Pedestrians } from './city/pedestrians.js';
-import { PARKED } from './city/station.js';
+import { Rotary } from './city/rotary.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.has('shot');
-let world = null, trains = null, map = null, crossings = null, signals = null, traffic = null, peds = null;
+let world = null, trains = null, map = null, crossings = null, signals = null, traffic = null, peds = null, rotary = null;
 const $ = (id) => document.getElementById(id);
 const SUN_DIR = [-0.776, 0.517, 0.362];   // from the west-south-west, ~31° up: a spring afternoon around 16:00
 
@@ -111,8 +111,8 @@ async function build() {
   await world.buildGlobal((label) => { setProgress(0.15 + 0.6 * (i++ / steps.length), `${label}を準備中…`); });
   stats.modules.global = world.stats.global;
   { const t2 = performance.now(); trains = new Trains(ctx); scene.add(trains.root); window.__trains = trains; crossings = new LevelCrossings(ctx, trains); scene.add(crossings.root); signals = new Signals(ctx, world.U.net, world.U.raster); scene.add(signals.root); stats.modules.global['電車・踏切'] = Math.round(performance.now() - t2); }
-  { const t3 = performance.now(); traffic = new Traffic(ctx, { signals, crossings }); scene.add(traffic.root); window.__traffic = traffic; for (const pv of PARKED) traffic.addParked(...pv); stats.modules.global['交通'] = Math.round(performance.now() - t3); }
-  { const t4 = performance.now(); peds = new Pedestrians(ctx, { signals, traffic, crossings }); scene.add(peds.root); window.__peds = peds; traffic.peds = peds; traffic.peopleLook = (role) => peds.look(role); stats.modules.global['歩行者'] = Math.round(performance.now() - t4); }
+  { const t3 = performance.now(); traffic = new Traffic(ctx, { signals, crossings }); scene.add(traffic.root); window.__traffic = traffic; stats.modules.global['交通'] = Math.round(performance.now() - t3); }
+  { const t4 = performance.now(); peds = new Pedestrians(ctx, { signals, traffic, crossings }); scene.add(peds.root); window.__peds = peds; traffic.peds = peds; traffic.peopleLook = (role) => peds.look(role); rotary = new Rotary(ctx, traffic, peds); window.__rotary = rotary; stats.modules.global['歩行者'] = Math.round(performance.now() - t4); }
   setProgress(0.8, 'まわりの街を組み立て中…');
   await new Promise(r => setTimeout(r, 0));
   const t1 = performance.now();
@@ -144,6 +144,7 @@ function stepUpdates(dt, t) {
   if (crossings) crossings.update(t, dt);
   if (signals) signals.update(t);
   if (traffic) traffic.update(dt, t, ctx.player.position);
+  if (rotary) rotary.update(dt);
   if (peds) peds.update(dt, t, ctx.player.position);
   for (const fn of ctx._updates) { try { fn(dt, t); } catch (e) { if (!fn.__err) { fn.__err = 1; console.error('update error', e); errors.push({ module: 'update', message: String(e && e.stack || e) }); } } }
 }

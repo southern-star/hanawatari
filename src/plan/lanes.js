@@ -9,7 +9,10 @@
 //    street meeting a road); the stop line's position on the lane; level crossings (always stop, go when clear).
 //  • conflicts: pairs of connectors at a junction whose paths cross or merge into the same lane, where along each
 //    they meet, and which one gives way.
-import { network } from './network.js';
+import { network, phaseOf } from './network.js';
+import { Alignment } from './geom.js';
+import { groundAt } from './ground.js';
+import { BUS_NET, TAXI_NET } from './station-layout.js';
 
 const RANK = { alley: 0, street: 1, old: 2, collector: 3, arterial: 4, national: 5 };
 /** Speed limits (m/s): 60 / 50 / 40 / 40 / 30 km/h. */
@@ -19,6 +22,7 @@ const RAIL_HW = { jr: 13, private: 6, metro: 5.5, tram: 3.8, agt: 4.5 };
 /** Lane centre offsets from the way's centreline (distance, positive), kerb lane first. */
 function laneOffsets(w) {
   if (w.st && w.st.arcade) return null;                                              // the arcade: pedestrians only
+  if (w.st && w.st.station && w.st.station.laneD) return [w.st.station.laneD];        // a station drive: its own lanes
   if (w.kind !== 'road' || w.cls === 'street') {                                     // streets: one lane each way, keep left
     if (w.cw * 2 < 3.9) return null;                                                   // alleys: no cars
     return [Math.min(w.cw / 2, 2.2)];
@@ -62,9 +66,9 @@ export function buildLanes() {
       for (const dir of [1, -1]) {
         const from = dir > 0 ? ndA : ndB, to = dir > 0 ? ndB : ndA;
         const L = { id: links.length, way: w, dir, s0, s1, len: s1 - s0, from, to, cls: w.kind === 'road' ? w.cls : 'street', vmax: VMAX[w.kind === 'road' ? w.cls : 'street'],
-          rank: RANK[w.kind === 'road' ? w.cls : 'street'], lanes: [], stopAt: null, control: 'free', group: -1, lx: [] };
-        // a narrow street is slower
-        if (L.cls === 'street' && w.cw * 2 < 5.5) L.vmax = 6.9;
+          rank: RANK[w.kind === 'road' ? w.cls : 'street'], lanes: [], stopAt: null, control: 'free', group: -1, lx: [], private: w.st && w.st.station ? w.st.station.net : null };
+        // a narrow street is slower (and so are the station's drives)
+        if (L.cls === 'street' && (w.cw * 2 < 5.5 || L.private)) L.vmax = 6.9;
         offs.forEach((o, k) => { const ln = { id: lanes.length, link: L, k, d: -dir * o, len: L.len, out: [], in: [], veh: [], tail: [] }; L.lanes.push(ln); lanes.push(ln); });
         // level crossings on this stretch: where to stop before them (approach side), and the crossing's extent
         for (const x of w.lx) {
@@ -81,7 +85,7 @@ export function buildLanes() {
   }
   // lane position helpers
   for (const ln of lanes) {
-    const L = ln.link, w = L.way;
+    const L = ln.link;
     ln.sOf = (u) => (L.dir > 0 ? L.s0 + u : L.s1 - u);
   }
   // ---------------------------------------------------------------- junction control and stop lines
@@ -94,7 +98,7 @@ export function buildLanes() {
     const rankHere = Math.max(...nd.arms.map(a => RANK[a.cls] ?? 0));
     for (const L of e.in) {
       const arm = nd.arms.find(r => r.way === L.way && r.dir === -L.dir);
-      if (signal) { L.control = 'signal'; L.group = L.way === majorWay ? 0 : 1; }
+      if (signal) { L.control = 'signal'; L.group = phaseOf(L.way, majorWay); }
       else if (nd.plain) L.control = 'free';
       else if (nd.minor) L.control = L.way === nd.minor ? 'priority' : 'stop';
       else if (L.rank >= rankHere && nd.arms.filter(a => RANK[a.cls] === rankHere).length >= 2 && nd.arms.filter(a => RANK[a.cls] === rankHere && a.way === L.way).length === 2) L.control = 'priority';
@@ -110,6 +114,30 @@ export function buildLanes() {
   const head = (ln, end) => {                                                          // point + heading at a lane's end (1) or start (0)
     const L = ln.link, u = end ? ln.len : 0, s = ln.sOf(u), q = L.way.align.at(s);
     return { x: q.x - q.hz * ln.d, z: q.z + q.hx * ln.d, hx: q.hx * L.dir, hz: q.hz * L.dir };
+  };
+  /** The path through a junction from the end of lane li to the start of lane lo: a cubic curve, its speed. */
+  const connect = (nd, li, lo, kind) => {
+    const p = head(li, 1), q = head(lo, 0);
+    if (!kind) { const cross = p.hx * q.hz - p.hz * q.hx, dot = p.hx * q.hx + p.hz * q.hz, ang = Math.atan2(cross, dot); kind = Math.abs(ang) < 0.55 ? 'S' : ang > 0 ? 'R' : 'L'; }
+    const dist = Math.hypot(q.x - p.x, q.z - p.z), k1 = kind === 'S' ? dist / 3 : kind === 'U' ? Math.max(3, dist) : dist * 0.42;
+    const P = [[p.x, p.z], [p.x + p.hx * k1, p.z + p.hz * k1], [q.x - q.hx * k1, q.z - q.hz * k1], [q.x, q.z]];
+    const n = dist < 0.3 ? 1 : Math.max(4, Math.min(20, Math.ceil(dist / 1.5)));
+    const pts = [], cum = [0];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, m = 1 - t;
+      pts.push([m * m * m * P[0][0] + 3 * m * m * t * P[1][0] + 3 * m * t * t * P[2][0] + t * t * t * P[3][0], m * m * m * P[0][1] + 3 * m * m * t * P[1][1] + 3 * m * t * t * P[2][1] + t * t * t * P[3][1]]);
+      if (i) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    }
+    // the tightest curvature → the speed through (≈ 2 m/s² lateral)
+    let rmin = 1e9;
+    for (let i = 1; i + 1 < pts.length; i++) {
+      const [x0, z0] = pts[i - 1], [x1, z1] = pts[i], [x2, z2] = pts[i + 1];
+      const a1 = Math.atan2(z1 - z0, x1 - x0), a2 = Math.atan2(z2 - z1, x2 - x1); let da = Math.abs(a2 - a1); if (da > Math.PI) da = 2 * Math.PI - da;
+      const ds = (Math.hypot(x1 - x0, z1 - z0) + Math.hypot(x2 - x1, z2 - z1)) / 2; if (da > 1e-4) rmin = Math.min(rmin, ds / da);
+    }
+    const c = { id: connectors.length, node: nd, from: li, to: lo, kind, pts, cum, len: cum[cum.length - 1], vmax: Math.min(li.link.vmax, lo.link.vmax, Math.sqrt(2.2 * rmin) + 1.5), conflicts: [], veh: [], tail: [] };
+    connectors.push(c); li.out.push(c); lo.in.push(c);
+    return c;
   };
   for (const nd of N.nodes) {
     const e = linksAt.get(nd.id); if (!e || !e.in.length || !e.out.length) continue;
@@ -128,29 +156,37 @@ export function buildLanes() {
         if (kind === 'L' || kind === 'U') pairs.push([kind === 'U' ? nIn - 1 : 0, kind === 'U' ? nOut - 1 : 0]);
         else if (kind === 'R') pairs.push([nIn - 1, nOut - 1]);
         else for (let k = 0; k < nIn; k++) pairs.push([k, Math.min(k, nOut - 1)]);
-        for (const [ki, ko] of pairs) {
-          const li = Lin.lanes[ki], lo = Lout.lanes[ko], p = head(li, 1), q = head(lo, 0);
-          const dist = Math.hypot(q.x - p.x, q.z - p.z), k1 = kind === 'S' ? dist / 3 : kind === 'U' ? Math.max(3, dist) : dist * 0.42;
-          const P = [[p.x, p.z], [p.x + p.hx * k1, p.z + p.hz * k1], [q.x - q.hx * k1, q.z - q.hz * k1], [q.x, q.z]];
-          const n = dist < 0.3 ? 1 : Math.max(4, Math.min(20, Math.ceil(dist / 1.5)));
-          const pts = [], cum = [0];
-          for (let i = 0; i <= n; i++) {
-            const t = i / n, m = 1 - t;
-            pts.push([m * m * m * P[0][0] + 3 * m * m * t * P[1][0] + 3 * m * t * t * P[2][0] + t * t * t * P[3][0], m * m * m * P[0][1] + 3 * m * m * t * P[1][1] + 3 * m * t * t * P[2][1] + t * t * t * P[3][1]]);
-            if (i) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
-          }
-          // the tightest curvature → the speed through (≈ 2 m/s² lateral)
-          let rmin = 1e9;
-          for (let i = 1; i + 1 < pts.length; i++) {
-            const [x0, z0] = pts[i - 1], [x1, z1] = pts[i], [x2, z2] = pts[i + 1];
-            const a1 = Math.atan2(z1 - z0, x1 - x0), a2 = Math.atan2(z2 - z1, x2 - x1); let da = Math.abs(a2 - a1); if (da > Math.PI) da = 2 * Math.PI - da;
-            const ds = (Math.hypot(x1 - x0, z1 - z0) + Math.hypot(x2 - x1, z2 - z1)) / 2; if (da > 1e-4) rmin = Math.min(rmin, ds / da);
-          }
-          const c = { id: connectors.length, node: nd, from: li, to: lo, kind, pts, cum, len: cum[cum.length - 1], vmax: Math.min(Lin.vmax, Lout.vmax, Math.sqrt(2.2 * rmin) + 1.5), conflicts: [], veh: [], tail: [] };
-          connectors.push(c); li.out.push(c); lo.in.push(c);
-        }
+        for (const [ki, ko] of pairs) connect(nd, Lin.lanes[ki], Lout.lanes[ko], kind);
       }
     }
+  }
+  // ---------------------------------------------------------------- the station's private lanes (plan/station-layout.js)
+  // Each net goes on from the end of its drive: links of one lane along the given points, joined at named nodes. Only
+  // the station's own buses and taxis use them (and the drives): city/traffic.js routes nobody else in.
+  const priv = {};
+  for (const NET of [BUS_NET, TAXI_NET]) {
+    const dw = N.ways.find(w => w.st && w.st.id === NET.drive); if (!dw) continue;
+    const Ls = links.filter(L => L.way === dw), inL = Ls.find(L => L.to && L.to.plain), outL = Ls.find(L => L.from && L.from.plain);
+    if (!inL || !outL) continue;
+    // no turning round at the drive's end: the private lanes carry on from there
+    for (const c of [...inL.lanes[0].out]) { inL.lanes[0].out.splice(inL.lanes[0].out.indexOf(c), 1); c.to.in.splice(c.to.in.indexOf(c), 1); connectors.splice(connectors.indexOf(c), 1); }
+    const by = { in: inL, out: outL };
+    for (const [name, [pts, control, kind]] of Object.entries(NET.links)) {
+      const A = new Alignment(pts.map(p => ({ x: p[0], z: p[1], r: p[2] || 0 })), { name: NET.name + ':' + name });
+      const way = { id: 'p:' + NET.name + ':' + name, kind: 'plaza', cls: 'station', align: A, length: A.length, yAt: (s) => { const q = A.at(s); return groundAt(q.x, q.z); }, nodes: [], lx: [] };
+      const L = { id: links.length, way, dir: 1, s0: 0, s1: A.length, len: A.length, from: null, to: null, cls: 'station', vmax: NET.vmax, rank: 0, lanes: [], stopAt: Math.max(0.5, A.length - 1),
+        control, group: -1, lx: [], private: NET.name, name, penalty: kind === 'bay' ? 80 : 0 };
+      const ln = { id: lanes.length, link: L, k: 0, d: 0, len: L.len, out: [], in: [], veh: [], tail: [], sOf: (u) => u };
+      L.lanes.push(ln); lanes.push(ln); links.push(L); by[name] = L;
+    }
+    const nodes = {};
+    for (const [nn, a, b] of NET.joins) {
+      const La = by[a], Lb = by[b], nd = nodes[nn] || (nodes[nn] = { id: 'p:' + NET.name + ':' + nn, name: nn, private: NET.name, arms: [] });
+      if (a !== 'in') La.to = nd; La.node = nd; if (b !== 'out') Lb.from = nd;
+      connect(nd, La.lanes[0], Lb.lanes[0]);
+    }
+    inL.control = NET.inControl; inL.stopAt = Math.max(0.5, inL.len - 1);
+    priv[NET.name] = by;
   }
   // ---------------------------------------------------------------- conflicts (per junction)
   const byNode = new Map();
@@ -191,8 +227,28 @@ export function buildLanes() {
     const L = ln.link, n = Math.max(1, Math.ceil(ln.len / 32));
     for (let i = 0; i <= n; i++) { const q = L.way.align.at(ln.sOf((ln.len * i) / n)), k = Math.floor(q.x / CELL) * 8192 + Math.floor(q.z / CELL); let a = grid.get(k); if (!a) grid.set(k, (a = new Set())); a.add(ln); }
   }
-  LANES = { links, lanes, connectors, linksAt, grid, CELL };
+  LANES = { links, lanes, connectors, linksAt, grid, CELL, private: priv };
+  // (from each link: the links its connectors lead to, for route finding)
+  for (const L of links) { const m = new Map(); for (const l of L.lanes) for (const c of l.out) { const o = m.get(c.to.link); if (o === undefined || c.len < o) m.set(c.to.link, c.len); } L.succ = [...m]; }
   return LANES;
+}
+
+/** Route finding: the driving distance from the start of every link to the start of `goal` (Infinity: can't get there),
+ *  by Dijkstra over the links backwards. allow(L): may a route use link L (the goal itself always may). */
+export function linkDist(goal, allow = () => true) {
+  const G = LANES, n = G.links.length, D = new Float64Array(n).fill(Infinity);
+  if (!G.pred) { G.pred = G.links.map(() => []); for (const L of G.links) for (const [M, cl] of L.succ) G.pred[M.id].push([L, cl]); }
+  const heap = [[0, goal.id]]; D[goal.id] = 0;
+  const push = (d, i) => { heap.push([d, i]); let k = heap.length - 1; while (k > 0) { const p = (k - 1) >> 1; if (heap[p][0] <= heap[k][0]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; } };
+  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let k = 0; for (;;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; k = m; } } return top; };
+  while (heap.length) {
+    const [d, i] = pop(); if (d > D[i]) continue;
+    for (const [L, cl] of G.pred[i]) {
+      if (L !== goal && !allow(L)) continue;
+      const nd = d + L.len + cl + (L.penalty || 0); if (nd < D[L.id]) { D[L.id] = nd; push(nd, L.id); }
+    }
+  }
+  return D;
 }
 
 /** Lanes near (x, z) within r (coarse: by grid cell). */

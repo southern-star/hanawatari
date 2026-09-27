@@ -13,16 +13,21 @@ A walkable, first-person **anime cel-shaded Japanese city** in plain [three.js](
 | ![駅の自由通路 · the station's free passage](docs/images/passage.jpg) | ![花渡横丁 · the drinking alley under the viaduct](docs/images/yokocho.jpg) |
 | ![駅前広場 · the station square and deck](docs/images/station-square.jpg) | ![街の全景 · the city](docs/images/overview.jpg) |
 | ![人 · people](docs/images/people.jpg) | ![タクシー · a taxi and its driver](docs/images/taxi.jpg) |
+| ![バスターミナル · the bus terminal](docs/images/bus-terminal.jpg) | ![バスの出入口 · the terminal's drive at the lights](docs/images/bus-drive.jpg) |
 
 ## 特徴 · Features
 
 - **3 km 四方の街**：花渡駅を中心に、駅前、商店街、下町、川と運河、高台の公園、寺町、丘の住宅地があります。周りの街並みは歩くにつれて生成されます。
 - **駅**：次の場所を作っています。
   - 自由通路と改札
-  - 東口の駅前広場：バスターミナル、タクシー乗り場、ペデストリアンデッキ
+  - 東口の駅前広場：バスターミナル（島式の乗り場、降車場、時刻表）、タクシー乗り場、ペデストリアンデッキ
   - 西口の広場
   - 高架下の飲み屋横丁
   - アーケード商店街
+- **バスターミナルとタクシー乗り場**：駅前のロータリーが動いています。
+  - バスは信号のある交差点から入り、降車場で客を降ろしてから、自分の乗り場で列の人を乗せて発車します。乗り場の手前で左ウインカー、発車のときは右ウインカーを出します
+  - タクシーは乗り場の列に並び、先頭の車に客が乗ると出ていきます
+  - 降りた人は島の歩道を歩いて街へ散っていき、乗り場の列には通りかかった人が並びます
 - **鉄道**：高架と地上の路線、路面電車、踏切（遮断機と警報音付き）があります。
 - **交通**：車線網の上を追従モデル（IDM）で走ります。
   - 信号、右折待ち、一時停止、合流、踏切、車線変更、ウインカーとブレーキランプ
@@ -38,6 +43,7 @@ A walkable, first-person **anime cel-shaded Japanese city** in plain [three.js](
 
 - **A 3 km city** round 花渡 station: the station front, a shopping arcade, old town, rivers and canals, a hill park, a temple quarter, hillside houses. The surroundings are built as you walk.
 - **The station**: a free passage with ticket gates, the east square (bus terminal, taxi rank, pedestrian deck), the west square, a drinking alley under the viaduct.
+- **The rotary at work**: buses come in at the lights, let their passengers off at the arrivals berth, pull up at their own berth, take on the queue and leave; taxis wait in line at the rank and leave with a fare. People getting off walk away into the town; the queues are made of people passing by.
 - **Railways**: elevated and surface lines, a tram, level crossings with barriers and bells.
 - **Traffic** on a lane graph with the Intelligent Driver Model: signals, right turns waiting for a gap, stop signs, merging, level crossings, lane changes, indicators and brake lamps. 13 car models and 4 two-wheelers; 50 cc scooters keep to 30 km/h and don't turn right at big junctions.
 - **Vehicles**: smooth bodies with real wheel arches, see-through glass with the interior (right-hand drive) and a driver, number plates with text.

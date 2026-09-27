@@ -11,6 +11,7 @@ import { heightAt } from './terrain.js';
 import { groundAt } from './ground.js';
 import { Alignment, clamp, smoothstep } from './geom.js';
 import { computeCrossings } from './crossings.js';
+import { STATION_DRIVES } from './station-layout.js';
 
 export const SIDEWALK = { national: 4, arterial: 3.5, collector: 2.5, old: 0, street: 0, alley: 0, ramp: 0, expressway: 0 };
 const RANK = { alley: 0, street: 1, old: 2, collector: 3, arterial: 4, national: 5 };
@@ -123,11 +124,15 @@ function layout(nd) {
   // (zebras on every road arm where two planned roads meet and at least one has sidewalks to link)
   const roadsHere = new Set(A.filter(a => a.kind === 'road').map(a => a.way)).size, walks = A.some(a => a.kind === 'road' && a.sw > 0);
   for (const a of A) {
-    a.crosswalk = a.kind === 'road' && roadsHere >= 2 && walks;
+    a.crosswalk = (a.kind === 'road' || !!(a.way.st && a.way.st.station && a.way.st.station.crosswalk)) && roadsHere >= 2 && walks;
     a.markFrom = a.cut + (a.crosswalk ? CROSSWALK + STOPGAP + 0.6 : a.kind === 'road' ? 1.5 : 0.8);
   }
   return nd;
 }
+
+/** The signal group of an approach along `way` at a junction whose major road is `majorWay`: 0 = the major road (and a
+ *  station drive facing it across the junction), 1 = the others (as city/signals.js runs them). */
+export const phaseOf = (way, majorWay) => (way === majorWay || (way.st && way.st.station && way.st.station.phaseMajor) ? 0 : 1);
 
 // ------------------------------------------------------------------ build
 let NET = null;
@@ -137,6 +142,16 @@ export function buildNetwork(streets) {
   const ways = [], byRoad = new Map();
   for (const R of ROADS) { if (R.cls === 'expressway' || R.cls === 'ramp') continue; const w = roadWay(R); ways.push(w); byRoad.set(R.id, w); }
   for (const st of streets) ways.push(streetWay(st));
+  // the station square's drives (plan/station-layout.js): streets off 宿場町通り into the square, joining its junctions
+  for (const D of STATION_DRIVES) {
+    const R = byRoad.get(D.road); if (!R) continue;
+    let s = 0, bd = Infinity;
+    const at = (t) => { const q = R.align.at(t), d = Math.hypot(q.x - D.at[0], q.z - D.at[1]); if (d < bd) { bd = d; s = t; } };
+    for (let t = 0; t <= R.length; t += 2) at(t);
+    for (let h = 1; h > 0.01; h /= 2) { const s0 = s; at(s0 - h); at(s0 + h); }
+    const q = R.align.at(s);
+    ways.push(streetWay({ id: D.id, a: [q.x, q.z], b: D.to, w: D.w, kind: 'street', district: null, station: D, ra: { road: D.road, s }, rb: null }));
+  }
   const nodes = [];
   const addNode = (x, z) => { const nd = { id: nodes.length, x, z, arms: [], ways: new Map() }; nodes.push(nd); return nd; };
   const attach = (nd, way, s) => { if (!nd.ways.has(way)) { nd.ways.set(way, s); way.nodes.push({ nd, s }); } };

@@ -7,7 +7,7 @@
 // Edges are polylines [x, y, z] (y = the walking surface) with a half-width for spreading out, a kind, their crossing
 // zone (where people and cars meet: u0..u1 along the edge, the signal for a zebra) and level crossings; they keep the
 // people on them (filled by city/pedestrians.js).
-import { network } from './network.js';
+import { network, phaseOf } from './network.js';
 import { groundAt } from './ground.js';
 
 const Y0 = 0.06, KERB = 0.15, RANK = { alley: 0, street: 1, old: 2, collector: 3, arterial: 4, national: 5 };
@@ -65,7 +65,9 @@ export function buildWalks(extras = []) {
   const mouthsAt = new Map();                                                    // node id → mouth edges (minor junctions)
 
   // ---------------------------------------------------------------- along the ways
+  const station = (w) => !!(w.st && w.st.station);                              // the station's drives: the square's walks
   for (const w of N.ways) {
+    if (station(w)) continue;
     const L = lineOf.get(w), sides = L.d === null ? [0] : [1, -1];
     for (const sd of sides) {
       const d = L.d === null ? 0 : sd * L.d, raised = w.sw > 0;
@@ -115,14 +117,14 @@ export function buildWalks(extras = []) {
   for (const nd of N.nodes) {
     if (nd.plain) {
       // a dead end: join the two sides so people can turn back across
-      if (nd.arms.length === 1) { const a = nd.arms[0]; if (armSides(a).length === 2) addEdge([armEnd(a, 1), armEnd(a, -1)], { kind: 'corner', hw: 0.4, cls: a.cls }); }
+      if (nd.arms.length === 1) { const a = nd.arms[0]; if (armSides(a).length === 2 && !station(a.way)) addEdge([armEnd(a, 1), armEnd(a, -1)], { kind: 'corner', hw: 0.4, cls: a.cls }); }
       continue;
     }
     if (nd.minor) {
       // streets into a road: each of their lines joins the nearer end of the road sidewalk's mouth
       const M = mouthsAt.get(nd.id) || [];
       for (const a of nd.arms) {
-        if (a.way === nd.minor) continue;
+        if (a.way === nd.minor || station(a.way)) continue;
         for (const sa of armSides(a)) {
           const E = armEnd(a, sa); let best = null, bd = 25;
           for (const m of M) for (const n of [m.a, m.b]) { const dd = Math.hypot(n.x - E[0], n.z - E[2]); if (dd < bd) { bd = dd; best = n; } }
@@ -158,7 +160,7 @@ export function buildWalks(extras = []) {
       if (a.crosswalk) {
         const tz = a.cut + 2.5, s = a.s + a.dir * tz, w = a.way, sd = a.dir > 0 ? 1 : -1;
         const Kp = wayPt(w, s, sd * (a.cw + 0.3), true), Zp = wayPt(w, s, sd * (a.cw - 0.3), false), Zm = wayPt(w, s, -sd * (a.cw - 0.3), false), Km = wayPt(w, s, -sd * (a.cw + 0.3), true);
-        const e = addEdge([P, Kp, Zp, Zm, Km, M], { kind: 'zebra', hw: 1.5, cls: a.cls, way: w, zone: { kind: 'zebra', nd, group: a.way === major ? 0 : 1 } });
+        const e = addEdge([P, Kp, Zp, Zm, Km, M], { kind: 'zebra', hw: 1.5, cls: a.cls, way: w, zone: { kind: 'zebra', nd, group: phaseOf(a.way, major) } });
         if (e) { e.zone.u0 = e.cum[1]; e.zone.u1 = e.cum[4]; }
       } else if (a.kind !== 'road' || a.sw === 0) {
         // across a street's mouth: out to the building line on each side first (wait there, clear of the cars)
@@ -175,7 +177,7 @@ export function buildWalks(extras = []) {
     let best = null, bd = maxD;
     for (let i = Math.floor((x - maxD) / CELL); i <= Math.floor((x + maxD) / CELL); i++) for (let j = Math.floor((z - maxD) / CELL); j <= Math.floor((z + maxD) / CELL); j++) {
       for (const e of EG.get(i * 8192 + j) || []) {
-        if (e.zone) continue;
+        if (e.zone || e.dead) continue;
         for (let k = 0; k + 1 < e.pts.length; k++) {
           const p = e.pts[k], q = e.pts[k + 1], ex = q[0] - p[0], ez = q[2] - p[2], l2 = ex * ex + ez * ez || 1e-9;
           const t = Math.max(0, Math.min(1, ((x - p[0]) * ex + (z - p[2]) * ez) / l2)), px = p[0] + ex * t, pz = p[2] + ez * t, dd = Math.hypot(x - px, z - pz), py = p[1] + (q[1] - p[1]) * t;
@@ -202,8 +204,9 @@ export function buildWalks(extras = []) {
   for (const X of extras) {
     const pts = X.pts.map(p => (p.length === 3 ? p : [p[0], groundAt(p[0], p[1]) + Y0 + (X.lift ?? 0), p[1]]));
     // join each end (unless it is left open) to the nearest line at about its height: split that line there
-    for (const end of [0, pts.length - 1]) {
-      if (X.open && X.open.includes(end === 0 ? 'start' : 'end')) continue;
+    for (const which of ['start', 'end']) {
+      if (X.open && X.open.includes(which)) continue;
+      const end = which === 'start' ? 0 : pts.length - 1;
       const p = pts[end], near = nearestOn(p[0], p[2], X.reach ?? 14, p[1]);
       if (!near) continue;
       const n = splitAt(near.e, near.u), np = [n.x, n.y, n.z];

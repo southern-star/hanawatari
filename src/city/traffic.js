@@ -9,7 +9,7 @@
 //    changed when a gap opens, indicators on for turns and lane changes, brake lamps when braking;
 //  • vehicles spawn and leave at the edge of a ~420 m circle round the player; on a jump the circle is refilled and
 //    run for a few seconds so queues and gaps look settled.
-import { buildLanes, lanesNear } from '../plan/lanes.js';
+import { buildLanes, lanesNear, linkDist } from '../plan/lanes.js';
 import { groundAt } from '../plan/ground.js';
 import { prng } from '../plan/geom.js';
 import { MAP } from '../plan/terrain.js';
@@ -54,6 +54,7 @@ export class Traffic {
     this.root = this.render.root;
     this.dims = {}; for (const T of TYPES) this.dims[T.name] = this.render.dims(T.name);
     this.veh = []; this.parked = []; this.rng = prng(0x7aff1c); this.nextId = 1; this.spawnT = 0; this.center = null; this.t = 0; this.count = {};
+    this.hooks = []; this._dist = new Map();                          // (the rotary: city/rotary.js); route-finding tables
     // level crossings: the crossing object for each lane's lx record (by position)
     if (crossings) for (const L of this.G.links) for (const x of L.lx) {
       const q = L.way.align.at(x.s); let best = null, bd = 30;
@@ -209,6 +210,17 @@ export class Traffic {
     if (el.link) {
       let d = Infinity;
       const L = el.link;
+      // a stop on this lane (a bus berth, the head of the taxi queue): pull up there, wait till it may go
+      const st = v.stops && v.stops[0];
+      if (st && st.lane === el) {
+        const dist = st.u - v.u;
+        if (dist < 1.2 && v.v < 0.3) {
+          if (!st.at) { st.at = true; st.t = 0; if (st.arrive) st.arrive(v, st); }
+          st.t += this.dt;
+          if (st.t >= st.dwell && (!st.ready || st.ready(v, st))) { v.stops.shift(); v.lcBlink = 2; v.lcT = 2.5; if (st.depart) st.depart(v, st); }
+          else d = Math.max(0.05, dist);
+        } else if (dist > -2) d = Math.max(0.05, dist);
+      }
       for (const x of L.lx) {                                                          // level crossings: always stop, go when clear
         if (v.u > x.u + 0.8 || v.lxPassed === x) continue;
         const dist = x.u - v.u;
@@ -273,9 +285,22 @@ export class Traffic {
   /** Choose the connector at the end of lane `ln`'s link; returns it (and sets v.target when another lane is needed). */
   route(v, ln) {
     const L = ln.link, opts = [];
+    // on the way somewhere (v.plan: the links to reach, in turn): the connector on the shortest way to the next
+    if (v.plan && v.plan.length) {
+      const D = this.distTo(v.plan[0], v.type.street === 0);
+      let pick = null, best = Infinity;
+      for (const l of L.lanes) for (const c of l.out) {
+        const d = D[c.to.link.id]; if (!(d < Infinity)) continue;
+        const cost = c.len + d + (l === ln ? 0 : L.len < 35 ? 40 : 8);
+        if (cost < best) { best = cost; pick = c; }
+      }
+      if (pick) { v.next = pick; v.target = pick.from === ln ? null : pick.from; v.waitLC = 0; v.blink = pick.kind === 'L' ? 1 : pick.kind === 'R' ? 2 : 0; return pick; }
+      v.plan = null;                                                                      // no way there from here
+    }
     let tot = 0;
     for (const l of L.lanes) for (const c of l.out) {
       const Lo = c.to.link;
+      if (Lo.private && !L.private) continue;                                              // the station's own lanes
       let w = TURN_W[c.kind] * (CLASS_W[Lo.cls] ?? 0.4);
       if (Lo.cls === 'street' && v.type.street === 0) w *= 0.01;                          // buses keep to the roads
       const end = c.to.link.to; if (!end || (end.plain && end.arms.length < 2)) w *= 0.03;   // into a dead end / off the map
@@ -292,6 +317,14 @@ export class Traffic {
     v.next = pick; v.target = pick.from === ln ? null : pick.from; v.waitLC = 0;
     v.blink = pick.kind === 'L' ? 1 : pick.kind === 'R' ? 2 : 0;
     return pick;
+  }
+  /** Driving distances to link `goal` from every link (cached): buses keep off the streets; nobody passes through the
+   *  station's private lanes except to a goal among them. */
+  distTo(goal, bus = false) {
+    const key = goal.id * 2 + (bus ? 1 : 0);
+    let D = this._dist.get(key);
+    if (!D) { D = linkDist(goal, (L) => (!L.private || L.private === goal.private) && !(bus && L.cls === 'street' && !L.private)); this._dist.set(key, D); }
+    return D;
   }
   tryLaneChange(v) {
     const el = v.el, L = el.link, tk = v.target.k, k = el.k, step = tk > k ? 1 : -1, to = L.lanes[k + step];
@@ -330,21 +363,34 @@ export class Traffic {
     const d = this.dims[T.name];
     if (u < d.L) return null;
     for (const w of ln.veh) if (Math.abs(w.u - u) < d.L + 8) return null;
-    const r = this.rng;
+    return this.make(T, ln, u, v0, q);
+  }
+  /** A vehicle of type T on lane ln at u (its front), moving at v0 (default: most of the limit). */
+  make(T, ln, u, v0, q = this.pos(ln, u, {}), extra = null) {
+    const r = this.rng, d = this.dims[T.name];
     const v = { id: this.nextId++, type: T, name: T.name, color: this.paintOf(T), L: d.L, W: d.W, H: d.H, wb: d.wb, rt: d.rt, fo: d.fo, plate: plateTile(PLATE_KIND[T.name] ?? 'white', this.rng),
       a: T.a * (0.85 + r() * 0.3), b: T.b, T: T.T * (0.85 + r() * 0.35), s0: T.s0, vf: T.vf * (0.9 + r() * 0.18),
       v: 0, u, el: ln, prev: null, next: null, target: null, lat: 0, stopT: 0, cleared: false, spin: r() * 6, acc: 0, blink: 0, lcBlink: 0, lcT: 0,
       x: q.x, y: q.y, z: q.z, yaw: Math.atan2(q.hx, q.hz), brake: 0, latK: T.moto ? -0.8 - r() * 0.3 : 0, roll: 0 };
     v.v = Math.min(v0 ?? ln.link.vmax * 0.8, ln.link.vmax) * v.vf;
+    if (extra) Object.assign(v, extra);
+    if (v.station && ln.link.private) v.station.inside = true;
+    if (v.plan && v.plan[0] === ln.link) v.plan.shift();
     let i = 0; while (i < ln.veh.length && ln.veh[i].u < u) i++;
     ln.veh.splice(i, 0, v); this.veh.push(v); this.count[T.name] = (this.count[T.name] || 0) + 1;
     this.route(v, ln);
     return v;
   }
+  /** Put a vehicle of the named type on lane ln at u, with extra state (a plan, stops) — for the rotary. */
+  spawnAt(name, ln, u, v0 = 0, extra = null) {
+    const T = TYPES.find(t => t.name === name); if (!T || (this.count[name] || 0) >= this.render.models[name].n) return null;
+    return this.make(T, ln, u, v0, undefined, extra);
+  }
   remove(v) {
     const a = v.el.veh, i = a.indexOf(v); if (i >= 0) a.splice(i, 1);
     if (v.prev) { const j = v.prev.tail.indexOf(v); if (j >= 0) v.prev.tail.splice(j, 1); }
     const k = this.veh.indexOf(v); if (k >= 0) { this.veh.splice(k, 1); this.count[v.name]--; }
+    for (const h of this.hooks) if (h.removed) h.removed(v);
   }
   inMap(x, z) { return x > MAP.x0 + 5 && x < MAP.x1 - 5 && z > MAP.z0 + 5 && z < MAP.z1 - 5; }
   /** Top up the circle round (px, pz) to its share of traffic: the shortfall is dealt out over the lanes by their
@@ -354,6 +400,7 @@ export class Traffic {
     for (const ln of lanesNear(px, pz, R_SIM)) {
       const q = this.pos(ln, ln.len / 2, this._q || (this._q = {}));
       if (Math.hypot(q.x - px, q.z - pz) > R_SIM || !this.inMap(q.x, q.z) || !ln.out.length) continue;
+      if (ln.link.private) continue;                                                       // (the rotary fills those)
       want += ln.len * (DENSITY[ln.link.cls] ?? 0.003); cand.push(ln); cum.push(want);
     }
     let short = Math.min(MAX_VEH, Math.round(want * frac)) - this.veh.length;
@@ -382,6 +429,7 @@ export class Traffic {
     for (const v of [...this.veh]) if (Math.hypot(v.x - px, v.z - pz) > R_SIM) this.remove(v);
     this.center = [px, pz];
     this.populate(px, pz, 0, 1);
+    for (const h of this.hooks) if (h.resettle) h.resettle(px, pz, t);
     for (let i = 0; i < 80; i++) this.step(0.15, t - (80 - i) * 0.15, px, pz, true);          // let it settle
     for (const v of this.veh) this.place(v);
   }
@@ -431,17 +479,25 @@ export class Traffic {
         el.tail.push(v); v.prev = el;
         v.el = nx; v.u = over; nx.veh.unshift(v);
         v.cleared = false; v.stopT = 0; v.lxPassed = null;
-        if (nx.link) { this.route(v, nx); if (!v.next && !warm && Math.hypot(v.x - px, v.z - pz) > 60) { this.remove(v); break; } }
+        if (nx.link) {
+          if (v.plan && v.plan[0] === nx.link) v.plan.shift();
+          if (v.station) {                                                                 // the station's own: in, and out onto the street
+            if (nx.link.private) v.station.inside = true;
+            else if (v.station.inside) { for (const h of this.hooks) if (h.left) h.left(v); v.station = null; }
+          }
+          this.route(v, nx); if (!v.next && !warm && Math.hypot(v.x - px, v.z - pz) > 60) { this.remove(v); break; }
+        }
       }
-      if (v.el.link && v.target) { v.waitLC = (v.waitLC || 0) + dt; this.tryLaneChange(v); if (v.target && v.waitLC > 9 && v.v < 0.5) { this.route(v, v.el); if (v.target) { v.next = v.el.out[0] || null; v.target = null; } } }
+      if (v.el.link && v.target) { v.waitLC = (v.waitLC || 0) + dt; this.tryLaneChange(v); if (v.target && v.waitLC > 9 && v.v < 0.5) { this.route(v, v.el); if (v.target) { v.next = v.el.out.find(c => !c.to.link.private || v.el.link.private) || null; v.target = null; } } }
       if (v.lcT > 0) v.lcT -= dt; else v.lcBlink = 0;
       v.lat *= Math.exp(-dt / 0.8); if (Math.abs(v.lat) < 0.01) v.lat = 0;
       v.spin += (v.v * dt) / v.rt;
       if (!warm) this.place(v);
       // leave: out of the circle, off the map, stuck for long far away
       const dp = Math.hypot(v.x - px, v.z - pz);
-      if (dp > R_SIM + 60 || (!this.inMap(v.x, v.z) && dp > 80) || (v.stopped > 45 && dp > 120)) this.remove(v);
+      if (dp > R_SIM + 60 || (!this.inMap(v.x, v.z) && dp > 80) || (v.stopped > 45 && dp > 120 && !v.station)) this.remove(v);
     }
+    for (const h of this.hooks) if (h.step) h.step(dt, t, warm);
     // top up now and then (never in sight of the player)
     this.spawnT -= dt;
     if (this.spawnT <= 0) { this.spawnT = 0.6; this.populate(px, pz, warm ? 0 : R_QUIET, 1); }
@@ -465,7 +521,8 @@ export class Traffic {
       const brake = v.acc < -1.2 || (v.v < 0.3 && v.stopped > 0.3) ? 1 : 0;
       v.brake = dt > 0 ? v.brake + (brake - v.brake) * Math.min(1, dt * 12) : brake;
       const near = v.el.link && v.next && v.next.kind !== 'S' && v.el.len - v.u < 35, onTurn = !v.el.link && v.el.kind !== 'S';
-      const side = v.lcBlink || ((near || onTurn) ? v.blink : 0);
+      const st = v.stops && v.stops[0], pulling = st && st.lane === v.el && st.u - v.u < 22 && st.blink !== false;
+      const side = v.lcBlink || (pulling ? 1 : (near || onTurn) ? v.blink : 0);
       R.add(v.name, v.x, v.y, v.z, v.yaw, v.pitch, v.color, v.brake, side === 1 && blinkOn ? 1 : 0, side === 2 && blinkOn ? 1 : 0, v.spin, v.steer, v.plate, v.roll || 0);
     }
     for (const v of this.parked) R.add(v.name, v.x, v.y, v.z, v.yaw, 0, v.color, 0, 0, 0, 0, 0, v.plate);

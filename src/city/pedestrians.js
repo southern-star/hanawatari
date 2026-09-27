@@ -13,6 +13,7 @@ import { lanesNear } from '../plan/lanes.js';
 import { prng } from '../plan/geom.js';
 import { MAP } from '../plan/terrain.js';
 import { PASSAGE } from '../plan/urban.js';
+import { ISLE, RING, RING_ZEBRAS, TAXI_STAND, ISLAND_WALK } from '../plan/station-layout.js';
 import { groundAt } from '../plan/ground.js';
 import { PeopleRenderer } from './people/render.js';
 import { makeLook, pickRole, companionRole, seated } from './people/looks.js';
@@ -30,11 +31,13 @@ const DENS = { sidewalk: { national: 0.07, arterial: 0.065, collector: 0.045 }, 
 const HUB = [-420, -150];
 const hubPull = (x, z) => 1 + 2.6 * Math.exp(-Math.hypot(x - HUB[0], z - HUB[1]) / 230);
 
-/** The station's walks, joined to the network: the free passage, its gates, the east square round the bus ring
- *  (with the zebras to the berth island), the deck and its stairs, the west promenade. */
+/** The station's walks, joined to the network: the free passage, its gates, the east square round the bus ring (the
+ *  island's two rows of berths, the zebras to it), the taxi stand, the deck and its stairs, the west promenade. */
 function stationWalks() {
   const G0 = groundAt(-300, -120), FY = groundAt(-450, (PASSAGE.z0 + PASSAGE.z1) / 2) + 0.15, T = G0 + 6.2, IY = G0 + 0.18, zc = (PASSAGE.z0 + PASSAGE.z1) / 2;
-  const g = (x, z, dy = 0.15) => [x, groundAt(x, z) + dy, z];
+  const g = (x, z, dy = 0.15) => [x, groundAt(x, z) + dy, z], I = (x, z) => [x, IY, z];
+  const [xw, xe] = [ISLAND_WALK.w, ISLAND_WALK.e], [zN, zS, zX] = [ISLAND_WALK.n, ISLAND_WALK.s, ISLAND_WALK.x];
+  const [zw, ze] = [(RING_ZEBRAS[0][2] + RING_ZEBRAS[0][3]) / 2, (RING_ZEBRAS[1][2] + RING_ZEBRAS[1][3]) / 2];
   return [
     { pts: [g(-340, -247), g(-340, -205), g(-340, zc), g(-340, -126), g(-340, -100), g(-340, -36), g(-340, 5)], kind: 'plaza', hw: 3.2 },            // the forecourt
     { pts: [[-342, FY, zc], [-395, FY, zc], [-453, FY, zc], [-500, FY, zc], [-556, FY, zc]], kind: 'passage', hw: 3.6, cls: 'passage' },                  // 自由通路
@@ -43,19 +46,24 @@ function stationWalks() {
     { pts: [g(-340, -205), g(-300, -205), g(-258, -205)], kind: 'plaza', hw: 2.5 },                                                                    // north of the ring
     { pts: [g(-340, -100), g(-300, -100), g(-258, -100)], kind: 'plaza', hw: 2.5 },                                                                    // between the ring and the taxi pool
     { pts: [g(-340, -36), g(-300, -36), g(-258, -36)], kind: 'plaza', hw: 2.5 },                                                                       // south of the taxi pool
-    { pts: [g(-340, -126), g(-322.5, -126)], kind: 'plaza', hw: 1.5 },
-    { pts: [g(-322.5, -126), [-310.5, IY, -126]], kind: 'zebra', hw: 1.6, zone: 'free' },                                                               // to the island
-    { pts: [[-310.5, IY, -126], [-299.5, IY, -126]], kind: 'plaza', hw: 1.2 },
-    { pts: [[-299.5, IY, -181], [-299.5, IY, -175.8], [-299.5, IY, -153], [-299.5, IY, -130.2], [-299.5, IY, -126], [-299.5, IY, -119]], kind: 'plaza', hw: 1.6, cls: 'isle' },   // the berths
-    { pts: [[-299.5, IY, -126], [-288.5, IY, -126]], kind: 'plaza', hw: 1.2 },
-    { pts: [[-288.5, IY, -126], g(-276.5, -126)], kind: 'zebra', hw: 1.6, zone: 'free' },
-    { pts: [g(-276.5, -126), g(-276.5, -140), g(-258, -140)], kind: 'plaza', hw: 1.8 },
+    { pts: [g(TAXI_STAND.x - 1.6, -100), g(TAXI_STAND.x - 1.6, TAXI_STAND.z0 - 2), g(TAXI_STAND.x - 1.6, TAXI_STAND.z1 + 1), g(TAXI_STAND.x - 1.6, -36)], kind: 'plaza', hw: 0.4 },   // the taxi stand
+    // the berth island: a walk along each row of berths, joined across both ends and by the south stairs' foot
+    { pts: [I(xw, zN), I(xw, zS)], kind: 'plaza', hw: 1.0, cls: 'isle', open: ['start', 'end'] },
+    { pts: [I(xe, zN), I(xe, zS)], kind: 'plaza', hw: 1.0, cls: 'isle', open: ['start', 'end'] },
+    { pts: [I(xw, zN), I(-299.5, zN), I(xe, zN)], kind: 'plaza', hw: 1.2, cls: 'isle' },
+    { pts: [I(xw, zS), I(-299.5, zS), I(xe, zS)], kind: 'plaza', hw: 1.2, cls: 'isle' },
+    { pts: [I(xw, zX), I(-299.5, zX), I(xe, zX)], kind: 'plaza', hw: 1.2, cls: 'isle' },
+    // the zebras: forecourt → island, island → the east strip (and under the deck out to the street)
+    { pts: [g(-340, zw), g(-322.5, zw)], kind: 'plaza', hw: 1.5 },
+    { pts: [g(-322.5, zw), I(ISLE[0] + 0.5, zw)], kind: 'zebra', hw: 1.6 },
+    { pts: [g(RING[2] + 1.2, ze), g(RING[2] + 1.2, -150), g(-259, -150)], kind: 'plaza', hw: 1.5, open: ['start'] },
+    { pts: [I(ISLE[2] - 0.5, ze), g(RING[2] + 1.2, ze)], kind: 'zebra', hw: 1.6 },
     // the deck (2F) from the station building, the plaza over the island and its stairs, the east stairs to the street
     { pts: [[-347, T, -153], [-311.5, T, -153], [-299.5, T, -153]], kind: 'deck', hw: 3.5, cls: 'deck', sink: 'deck', open: ['start', 'end'] },
     { pts: [[-299.5, T, -153], [-287.5, T, -153], [-265.8, T, -153], [-265.8, T, -148.5]], kind: 'deck', hw: 3.5, cls: 'deck', open: ['start', 'end'] },
     { pts: [[-299.5, T, -153], [-299.5, T, -164.9], [-299.5, IY, -175.8]], kind: 'stairs', hw: 1, cls: 'deck', open: ['start'] },
     { pts: [[-299.5, T, -153], [-299.5, T, -141.1], [-299.5, IY, -130.2]], kind: 'stairs', hw: 1, cls: 'deck', open: ['start'] },
-    { pts: [[-265.8, T, -148.5], [-265.8, G0 + 0.15, -137.1]], kind: 'stairs', hw: 1.4, cls: 'deck', open: ['start'] },
+    { pts: [[-265.8, T, -148.5], [-265.8, G0 + 0.15, -137.1], g(-262, -137.1)], kind: 'stairs', hw: 1.4, cls: 'deck', open: ['start'] },
     // the west exit: the promenade between its lantern lines, down to 本町通り and up to the north road
     { pts: [[-556, FY, zc], g(-581.5, zc)], kind: 'plaza', hw: 2.5 },
     { pts: [g(-581.5, -200), g(-581.5, zc), g(-581.5, -60), g(-581.5, 4)], kind: 'plaza', hw: 3 },
@@ -94,7 +102,7 @@ export class Pedestrians {
     this.render = new PeopleRenderer(ctx, { trousers: [260, 760], skirt: [170, 460], child: [70, 170], elder: [90, 230] });
     this.bikes = new BikeRenderer(ctx, 220);
     this.root = new THREE.Group(); this.root.name = 'pedestrians'; this.root.add(this.render.root, this.bikes.root);
-    this.rng = prng(0x9e0917); this.statics = []; this.peds = []; this.nextId = 1; this.center = null; this.spawnT = 0; this.zonesAt = null;
+    this.rng = prng(0x9e0917); this.statics = []; this.peds = []; this.actors = []; this.nextId = 1; this.center = null; this.spawnT = 0; this.zonesAt = null;
     this.sinks = this.W.edges.filter(e => e.sink);
     // the level crossings' barriers, by position
     if (crossings) for (const e of this.W.edges) for (const x of e.lx) {
@@ -143,6 +151,62 @@ export class Pedestrians {
     const L = makeLook(role, this.rng);
     this.statics.push({ L, x, y: y ?? groundAt(x, z), z, yaw, mode, phase, amp });
     return this.statics[this.statics.length - 1];
+  }
+
+  // ---------------------------------------------------------------- actors (city/rotary.js: queues, getting on and off)
+  /** Someone moved about directly, off the walking network: standing at (x, y, z) facing yaw. */
+  actor(L, x, y, z, yaw, amp = 0) {
+    const a = { id: this.nextId++, L, x, y, z, yaw, face: yaw, v: 0, pace: L.pace * (0.8 + this.rng() * 0.15), path: null, done: null, phase: this.rng() * 6.28, amp };
+    this.actors.push(a); return a;
+  }
+  /** Send actor a along points [x, y, z] (then standing, facing `face`; done(a) on arrival). */
+  walk(a, pts, face = null, done = null) { a.path = pts.map(p => [p[0], p[1], p[2]]); a.face = face; a.done = done; }
+  drop(a) { const i = this.actors.indexOf(a); if (i >= 0) this.actors.splice(i, 1); }
+  /** An actor back into the crowd: onto the walk under them (within 2.5 m), going the way they face (or dir). */
+  release(a, dir = 0) {
+    let best = null, bd = 2.5;
+    for (const e of walksNear(a.x, a.z, 4)) {
+      if (e.zone || e.kind === 'stairs') continue;
+      for (let k = 0; k + 1 < e.pts.length; k++) {
+        const p = e.pts[k], q = e.pts[k + 1], ex = q[0] - p[0], ez = q[2] - p[2], l2 = ex * ex + ez * ez || 1e-9, t = Math.max(0, Math.min(1, ((a.x - p[0]) * ex + (a.z - p[2]) * ez) / l2));
+        const d = Math.hypot(a.x - p[0] - ex * t, a.z - p[2] - ez * t); if (d >= bd || Math.abs(p[1] + (q[1] - p[1]) * t - a.y) > 1) continue;
+        const l = Math.sqrt(l2); bd = d; best = { e, u: e.cum[k] + l * t, tx: ex / l, tz: ez / l };
+      }
+    }
+    this.drop(a);
+    if (!best) return null;
+    const d = dir || (best.tx * Math.sin(a.yaw) + best.tz * Math.cos(a.yaw) >= 0 ? 1 : -1);
+    const p = this.spawn(best.e, best.u, d, a.L); if (!p) return null;
+    // (where they are, across the walk: no jump)
+    const q = edgeAt(best.e, best.u, this._o), hx = q.tx * d, hz = q.tz * d, lat = (a.x - q.x) * -hz + (a.z - q.z) * hx;
+    p.lat = p.latT = p.latBase = Math.max(-best.e.hw, Math.min(best.e.hw, lat)); p.v = a.v || p.pace * 0.6; p.phase = a.phase; p.yaw = a.yaw;
+    this.place(p, 0);
+    return p;
+  }
+  /** Take someone walking near (x, z) on a walk that pred(e) accepts out of the crowd, as an actor where they are. */
+  recruit(x, z, r, pred) {
+    let best = null, bd = r;
+    for (const p of this.peds) {
+      if (p.bike || p.group || p.state !== 'walk' || !pred(p.e)) continue;
+      const d = Math.hypot(p.x - x, p.z - z); if (d < bd) { bd = d; best = p; }
+    }
+    if (!best) return null;
+    this.remove(best);
+    const a = this.actor(best.L, best.x, best.y, best.z, best.yaw); a.phase = best.phase; return a;
+  }
+  stepActors(dt) {
+    for (const a of [...this.actors]) {
+      if (a.path && a.path.length) {
+        const [tx, ty, tz] = a.path[0], dx = tx - a.x, dz = tz - a.z, d = Math.hypot(dx, dz);
+        a.v = Math.min(a.pace, a.v + dt * 1.5);
+        const step = a.v * dt;
+        if (d <= step || d < 0.02) { a.x = tx; a.y = ty; a.z = tz; a.path.shift(); }
+        else { a.x += dx / d * step; a.z += dz / d * step; a.y += (ty - a.y) * Math.min(1, step / d); }
+        if (d > 0.05) { let dy = Math.atan2(dx, dz) - a.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI; a.yaw += dy * Math.min(1, dt * 8); }
+        a.phase += step / (STRIDE * a.L.scale) * Math.PI * 2;
+        if (!a.path.length) { a.path = null; a.v = 0; const f = a.done; a.done = null; if (f) f(a); }
+      } else if (a.face !== null) { let dy = a.face - a.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI; a.yaw += dy * Math.min(1, dt * 4); }
+    }
   }
 
   // ---------------------------------------------------------------- crossings ↔ traffic
@@ -195,7 +259,7 @@ export class Pedestrians {
       const el = x.el;
       const test = (w, dist) => (dist < -w.L - 0.5 ? false : dist < 2.5 || (w.v > 0.4 && dist / w.v < 3.8));
       for (const w of el.veh) if (test(w, x.uEl - w.u)) return true;
-      for (const w of el.tail) if (x.uEl < 3) return true;
+      for (const w of el.tail) if (el.len + (w.u - w.L) < x.uEl + 1) return true;          // gone on, but its back still across
       if (el.link) { for (const c of el.in) for (const w of c.veh) if (test(w, c.len - w.u + x.uEl)) return true; }
       else for (const w of el.from.veh) if (w.next === el && test(w, el.from.len - w.u + x.uEl)) return true;
     }
@@ -232,11 +296,11 @@ export class Pedestrians {
     if (e.kind === 'edge') return { salaryman: 0.5, officeLady: 0.5, grandpa: 1.8, grandma: 2.0, kid: 1.8, womanCasual: 1.2 };
     return {};
   }
-  spawn(e, u, dir) {
+  spawn(e, u, dir, look = null) {
     if (this.peds.length >= MAX_PEDS) return null;
     const q = edgeAt(e, u, this._o), r = this.rng;
-    const bike = !NO_BIKES.has(e.kind) && r() < BIKE_SHARE;
-    const L = makeLook(pickRole(r, bike ? { salaryman: 0.4, officeLady: 0.6, grandpa: 0.8, kid: 0.4 } : this.rolesAt(q.x, q.z, e)), r);
+    const bike = !look && !NO_BIKES.has(e.kind) && e.cls !== 'isle' && r() < BIKE_SHARE;
+    const L = look || makeLook(pickRole(r, bike ? { salaryman: 0.4, officeLady: 0.6, grandpa: 0.8, kid: 0.4 } : this.rolesAt(q.x, q.z, e)), r);
     const keep = this.keepOf(e);
     const p = { id: this.nextId++, L, e, u, dir, v: L.pace * (0.6 + r() * 0.3), pace: L.pace * (0.92 + r() * 0.16), lat: -keep * (0.3 + r() * 0.7), latT: 0, latBase: -keep * (0.25 + r() * 0.75),
       phase: r() * 6.28, state: 'walk', t: 0, x: q.x, y: q.y, z: q.z, yaw: Math.atan2(q.tx * dir, q.tz * dir), amp: 1, mode: MODE.walk, phoneP: r() < 0.3 ? 1 : 0, wait: null, cross: false };
@@ -244,7 +308,7 @@ export class Pedestrians {
     p.latT = p.latBase;
     e.peds.push(p); this.peds.push(p);
     // walking together: friends from school, colleagues, a mother and her child
-    if (!bike && !e.zone && this.companions !== false && e.hw > 0.3 && r() < (/student|school|kid/.test(L.role) ? 0.38 : 0.16)) {
+    if (!bike && !look && !e.zone && this.companions !== false && e.hw > 0.3 && r() < (/student|school|kid/.test(L.role) ? 0.38 : 0.16)) {
       const g = { route: new Map(), pace: p.pace }; p.group = g;
       const n = r() < 0.7 ? 1 : 2, gap = Math.min(0.62, e.hw * 0.8);
       for (let k = 1; k <= n && this.peds.length < MAX_PEDS; k++) {
@@ -305,7 +369,7 @@ export class Pedestrians {
     const hx = Math.sin(p.yaw), hz = Math.cos(p.yaw);
     for (const e of n.edges) {
       if (e === p.e && n.edges.length > 1) continue;
-      if (p.bike && (NO_BIKES.has(e.kind) || e.sink)) continue;
+      if (p.bike && (NO_BIKES.has(e.kind) || e.sink || e.cls === 'isle')) continue;
       const from = e.a === n, o = edgeAt(e, from ? 0.4 : e.len - 0.4, this._o), dx = (from ? o.x - n.x : o.x - n.x), dz = (from ? o.z - n.z : o.z - n.z), l = Math.hypot(dx, dz) || 1;
       let w = 0.35 + 2.4 * Math.max(0, (dx * hx + dz * hz) / l);
       if (e.zone) w *= e.zone.kind === 'zebra' ? 0.55 : 0.4;
@@ -431,7 +495,7 @@ export class Pedestrians {
     if (!this.zonesAt || Math.hypot(px - this.zonesAt[0], pz - this.zonesAt[1]) > 90) { this.linkZones(px, pz, R_PED + 140); this.zonesAt = [px, pz]; }
     if (!this.center || Math.hypot(px - this.center[0], pz - this.center[1]) > 60) this.resettle(px, pz, t);
     this.center = [px, pz];
-    if (dt > 0) this.step(Math.min(dt, 0.1), t, px, pz);
+    if (dt > 0) { this.step(Math.min(dt, 0.1), t, px, pz); this.stepActors(Math.min(dt, 0.1)); }
     this.draw(t);
   }
   resettle(px, pz, t) {
@@ -444,6 +508,7 @@ export class Pedestrians {
     const R = this.render; R.begin(this.ctx.camera && this.ctx.camera.position);
     for (const s of this.statics) R.add(s.L.kind, s.x, s.y, s.z, s.yaw, s.mode, s.phase, s.amp, s.L.scale, s.L);
     const C = this.ctx.camera && this.ctx.camera.position;
+    for (const a of this.actors) { const moving = a.path && a.v > 0.05; R.add(a.L.kind, a.x, a.y, a.z, a.yaw, moving ? MODE.walk : MODE.stand, moving ? a.phase : a.id * 0.37, moving ? Math.min(1.1, 0.35 + a.v / a.pace * 0.75) : a.amp, a.L.scale, a.L); }
     for (const p of this.fixed) if (!C || Math.abs(p.x - C.x) + Math.abs(p.z - C.z) < R_PED * 1.2) R.add(p.L.kind, p.x, p.y, p.z, p.yaw, p.pose[0], p.phase, p.pose[1], p.L.scale, p.L);
     const B = this.bikes; B.begin();
     for (const p of this.peds) {

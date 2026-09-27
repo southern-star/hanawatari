@@ -1,8 +1,9 @@
 // 花渡駅 station front (built once). The east exit, between the station building and 宿場町通り:
 //   • the forecourt along the station face under a long canopy, the name board over the deck entrance and big
 //     channel letters high on the station building, the crowns of the department store and the hotel;
-//   • the bus terminal — a one-way ring round an island of berths (long shelters, benches, numbered berth poles,
-//     buses waiting) — reached from 駅前通り's junction, and the taxi pool with its queue and shelter;
+//   • the bus terminal — a one-way ring round an island of berths (shelters over the queues, benches, berth poles with
+//     their routes and timetables, the alighting berth) — its drive a fourth arm of the lights at 駅前通り, and the taxi
+//     pool with its stand and shelter (the layout: plan/station-layout.js; buses and taxis at work: city/rotary.js);
 //   • the pedestrian deck (2F) out of the concourse over the ring, a round deck plaza above the island with stairs
 //     down to the berths, and stairs down to the street at its east end;
 //   • the plazas: trees (from plan/trees.js), benches, the clock tower, the 交番, the area map, bicycle parking.
@@ -15,22 +16,13 @@ import { PASSAGE } from '../plan/urban.js';
 import { buildVision } from './vision.js';
 import { WEST, buildWestExit } from './westexit.js';
 
-export const EAST = [-348, -250, -256.5, 8];                  // x0, z0, x1, z1 (the square, station face .. street)
-const FORE = -333;                                             // forecourt: station face .. here
-const RING = [-321, -192, -278, -108], ISLE = [-311, -182, -288, -118], TAXI = [-296, -84, -262, -46];   // ring lanes 10 m
-const DRIVES = [[-278, -135, -256.5, -119], [-262, -72, -256.5, -56]];
-const DECK = { x0: -348, x1: -264, z0: -158, z1: -148, h: 6.2, hub: [-299.5, -153], R: 12 };
+import { EAST, FORE, RING, ISLE, TAXI, DRIVES, DECK, RING_ZEBRAS, BERTHS, TAXI_HEAD, TAXI_STAND } from '../plan/station-layout.js';
+export { EAST };
 
 const TILE = rgb('#d6d0c3'), TILE2 = rgb('#cbc4b6'), GRAN = rgb('#bfbab0'), GRAN2 = rgb('#b3aea4'), ASPH = rgb('#6a6c71'), KERB = rgb('#b3aea4'), ISL = rgb('#d3cdc0');
 const WHITE = rgb('#ecebe5'), YELLOW = rgb('#e0b53c'), STEEL = rgb('#9aa3aa'), STEEL_D = rgb('#737c83'), GLASS = rgb('#a9c4d6'), ROOF = rgb('#eceeec'), ROOF_U = rgb('#c9ccca');
 const DECKC = rgb('#dad5ca'), DECK_U = rgb('#b6b1a6'), CONC = rgb('#c6c1b6'), BENCH = rgb('#8a6446'), WOOD = rgb('#9a7452'), RED = rgb('#d9463b'), DARK = rgb('#2d2b33');
 const inR = (x, z, r) => x >= r[0] && x <= r[2] && z >= r[1] && z <= r[3];
-/** Vehicles standing at the station, drawn by the traffic (city/traffic.js): [model, x, z, yaw, colour]. */
-export const PARKED = [
-  ['bus', ISLE[0] - 1.8, -173, Math.PI, '#f1ecdf'], ['bus', ISLE[2] + 1.8, -135, 0, '#f1ecdf'],
-  ['taxi', -293.5, -80, Math.PI, '#1f2a44'], ['taxiSedan', -293.5, -73.6, Math.PI, '#f2c230'], ['taxi', -293.5, -67.2, Math.PI, '#1f2a44'],
-  ['taxiSedan', -293.5, -60.8, Math.PI, '#3f8f5b'], ['taxi', -293.5, -54.4, Math.PI, '#1f2a44'],
-];
 const DECK_COLS = [[DECK.hub[0] - 6, DECK.hub[1] - 6], [DECK.hub[0] + 6, DECK.hub[1] - 6], [DECK.hub[0] - 6, DECK.hub[1] + 6], [DECK.hub[0] + 6, DECK.hub[1] + 6], [-268, -153]];
 /** Where a viaduct pier may not stand in the east square: the bus ring's lanes, the drives, the taxi pool, the deck's columns. */
 export function stationBlocked(x, z) {
@@ -99,6 +91,32 @@ function areaMap(ctx, A) {
   });
 }
 
+/** The routes from each berth (all fictional). */
+const DEST = { '花01': '花渡台団地', '花02': '市民病院', '花11': '汐見ふ頭', '花12': '寺町・丘の上公園', '花21': '桜台車庫', '深夜': '花渡台団地 深夜バス' };
+/** A berth's board: its number, the routes from it and the timetable. */
+function berthBoard(ctx, A, n, routes) {
+  const f = ctx.tex.FONTS;
+  return A.cell('berth-board-' + n, 192, 256, (g, w, h) => {
+    g.fillStyle = '#f7f6f2'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#1f3a68'; g.fillRect(0, 0, w, 56);
+    g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    ctx.tex.fitText(g, n + '番のりば', w / 2, 29, w - 20, 34, f.sans, 900);
+    routes.forEach((r, i) => {
+      const y = 82 + i * 42;
+      g.fillStyle = ['#2f9e44', '#e8590c'][i % 2]; g.fillRect(10, y - 15, 58, 30);
+      g.fillStyle = '#ffffff'; g.textAlign = 'center'; ctx.tex.fitText(g, r, 39, y + 1, 52, 19, f.sans, 900);
+      g.fillStyle = '#1f2a44'; g.textAlign = 'left'; ctx.tex.fitText(g, DEST[r] || '', 76, y + 1, w - 84, 19, f.sans, 900);
+    });
+    g.textAlign = 'center';
+    for (let k = 0; k < 6; k++) {                                              // the timetable: an hour a row
+      const y = 164 + k * 15;
+      g.fillStyle = '#c9ccd2'; g.fillRect(8, y + 14, w - 16, 1);
+      g.fillStyle = '#1f2a44'; ctx.tex.fitText(g, String(15 + k), 22, y + 7, 22, 11, f.en, 900);
+      g.fillStyle = '#55606f'; for (let m = 0; m < 5 + (k * 7 + n) % 3; m++) ctx.tex.fitText(g, String((m * 12 + n * 5 + k * 3) % 60).padStart(2, '0'), 46 + m * 24, y + 7, 20, 10, f.en, 700);
+    }
+  });
+}
+
 /** Build the station front; kit = the shop-front kit (sign atlas + materials). Returns a Group. */
 export function buildStation(ctx, kit) {
   const mb = new MB(), sb = new SBuf(), phys = ctx.physics, A = kit.A;
@@ -129,11 +147,13 @@ export function buildStation(ctx, kit) {
   // markings: zebra crossings from the forecourt / east strip to the island, berth boxes, the taxi queue line
   const Y = (x, z, dy = 0.075) => gy(x, z) + dy;
   const flat = (x0, z0, x1, z1, col, dy = 0.075) => mb.quad([x0, Y(x0, z1, dy), z1], [x1, Y(x1, z1, dy), z1], [x1, Y(x1, z0, dy), z0], [x0, Y(x0, z0, dy), z0], col);
-  for (const [xa, xb] of [[RING[0], ISLE[0]], [ISLE[2], RING[2]]]) for (let x = xa + 0.6; x + 0.45 < xb - 0.3; x += 0.9) flat(x, -128, x + 0.45, -124, WHITE);
-  for (const [x0, x1] of [[ISLE[0] - 3.3, ISLE[0] - 0.3], [ISLE[2] + 0.3, ISLE[2] + 3.3]]) for (const [z0, z1] of [[-180, -166], [-140, -126]]) {
-    flat(x0, z0, x1, z0 + 0.15, YELLOW); flat(x0, z1 - 0.15, x1, z1, YELLOW); flat(x0, z0, x0 + 0.15, z1, YELLOW); flat(x1 - 0.15, z0, x1, z1, YELLOW);
-  }
-  for (let z = TAXI[1] + 2; z < TAXI[3] - 2; z += 4) flat(-291.1, z, -290.9, z + 2, YELLOW);
+  for (const [xa, xb, z0, z1] of RING_ZEBRAS) for (let x = xa + 0.6; x + 0.45 < xb - 0.3; x += 0.9) flat(x, z0, x + 0.45, z1, WHITE);
+  const box = (x0, z0, x1, z1, col) => { flat(x0, z0, x1, z0 + 0.15, col); flat(x0, z1 - 0.15, x1, z1, col); flat(x0, z0, x0 + 0.15, z1, col); flat(x1 - 0.15, z0, x1, z1, col); };
+  for (const B of BERTHS) { const [x0, x1] = B.side < 0 ? [ISLE[0] - 3.3, ISLE[0] - 0.3] : [ISLE[2] + 0.3, ISLE[2] + 3.3]; box(x0, B.box[0], x1, B.box[1], YELLOW); }
+  // the taxi queue's lane (a dashed line along it) and the head's box by the stand
+  for (let z = -52; z > -80; z -= 4) flat(TAXI_HEAD.x + 2.1, z - 2, TAXI_HEAD.x + 2.25, z, YELLOW);
+  box(TAXI_HEAD.x - 1.05, TAXI_HEAD.z - 0.3, TAXI_HEAD.x + 1.05, TAXI_HEAD.z + 4.9, YELLOW);
+  { const [x0, z0, x1, z1] = DRIVES[1], zm = (z0 + z1) / 2; flat(x1 - 1.9, z0 + 0.4, x1 - 1.45, zm - 0.3, WHITE); }   // the taxis' stop line (止まれ) out of the pool
   // ---------------------------------------------------------------- the station face: canopy, name board, letters
   const canopy = (x0, x1, z0, z1, y) => { mb.box(x0, x1, y, y + 0.22, z0, z1, ROOF, 'NSEWT'); mb.box(x0, x1, y - 0.01, y, z0, z1, ROOF_U, 'B'); };
   for (const [z0, z1] of [[-249, -166], [-140, -57]]) {
@@ -190,22 +210,30 @@ export function buildStation(ctx, kit) {
   }
   // ---------------------------------------------------------------- the berth island: shelters, benches, berth poles
   const IY = G0 + 0.18;
-  for (const [xs, dir] of [[ISLE[0], 1], [ISLE[2], -1]]) {
-    const xa = xs + dir * 0.3, xb = xs + dir * 2.6, x0 = Math.min(xa, xb), x1 = Math.max(xa, xb);
-    for (const [z0, z1] of [[-179, -166], [-140, -121]]) {
+  for (const B of BERTHS) {
+    const xs = B.side < 0 ? ISLE[0] : ISLE[2], dir = -B.side, hz = B.side < 0 ? 1 : -1;
+    if (B.shelter) {                                                             // the queue stands under it, by the kerb
+      const [z0, z1] = B.shelter, xa = xs + dir * 0.3, xb = xs + dir * 2.6, x0 = Math.min(xa, xb), x1 = Math.max(xa, xb);
       canopy(x0, x1, z0, z1, IY + 2.9);
       mb.box(Math.min(xb, xb + dir * 0.06), Math.max(xb, xb + dir * 0.06), IY + 0.3, IY + 2.3, z0 + 0.5, z1 - 0.5, GLASS, 'NSEWT');   // back glass
-      for (let z = z0 + 0.8; z <= z1 - 0.6; z += 6) { const px = xs + dir * 0.55; mb.box(px - 0.08, px + 0.08, IY, IY + 2.9, z - 0.08, z + 0.08, STEEL, 'NSEW'); phys.addCylinder(px, z, 0.12, IY - 1, IY + 2.9); }
-      for (let z = z0 + 3; z < z1 - 2; z += 7) { const bx = xs + dir * 1.9; mb.box(bx - 0.25, bx + 0.25, IY + 0.42, IY + 0.5, z - 1, z + 1, BENCH, 'NSEWT'); mb.box(bx - 0.06, bx + 0.06, IY, IY + 0.42, z - 0.8, z - 0.7, STEEL_D, 'NSEW'); mb.box(bx - 0.06, bx + 0.06, IY, IY + 0.42, z + 0.7, z + 0.8, STEEL_D, 'NSEW'); }
+      for (let z = z0 + 0.8; z <= z1 - 0.6; z += 6) { const px = xs + dir * 2.35; mb.box(px - 0.08, px + 0.08, IY, IY + 2.9, z - 0.08, z + 0.08, STEEL, 'NSEW'); phys.addCylinder(px, z, 0.12, IY - 1, IY + 2.9); }
+      for (let z = z0 + 3; z < z1 - 2; z += 7) { const bx = xs + dir * 1.7; mb.box(bx - 0.25, bx + 0.25, IY + 0.42, IY + 0.5, z - 1, z + 1, BENCH, 'NSEWT'); mb.box(bx - 0.06, bx + 0.06, IY, IY + 0.42, z - 0.8, z - 0.7, STEEL_D, 'NSEW'); mb.box(bx - 0.06, bx + 0.06, IY, IY + 0.42, z + 0.7, z + 0.8, STEEL_D, 'NSEW'); }
+    }
+    // the berth pole just ahead of where the bus's front stops: its number (or 降車場) up top, the routes and the
+    // timetable facing the queue
+    const x = xs + dir * 0.25, z = B.front + hz * 0.6;
+    mb.box(x - 0.05, x + 0.05, IY, IY + 2.7, z - 0.05, z + 0.05, STEEL, 'NSEW'); phys.addCylinder(x, z, 0.1, IY - 1, IY + 2.7);
+    const uv = B.board ? sticker(ctx, A, B.n + '番', '#2f64b5', '#ffffff') : sticker(ctx, A, '降車場', '#d9463b', '#ffffff');
+    sb.board(x, z, -dir, 0, 0.9, IY + 2.25, IY + 2.25 + 0.34, uv, 0.05); sb.board(x, z, dir, 0, 0.9, IY + 2.25, IY + 2.25 + 0.34, uv, 0.05);
+    if (B.board) {
+      const bb = berthBoard(ctx, A, B.n, B.routes), bz = z - hz * 0.08;
+      mb.box(x - 0.34, x + 0.34, IY + 1.02, IY + 1.98, bz - 0.03, bz + 0.03, STEEL_D, 'NSEWT');
+      sb.board(x, bz, 0, -hz, 0.64, IY + 1.05, IY + 1.05 + 0.64 * 256 / 192, bb, 0.035);
+    } else {
+      sb.board(x, z, -dir, 0, 1.6, IY + 1.2, IY + 1.2 + 1.6 * 64 / 384, fasciaSign(ctx, A, '降車専用', 'ARRIVALS', 'navy'), 0.06);
     }
   }
-  const berth = (x, z, n, fx) => {
-    mb.box(x - 0.05, x + 0.05, IY, IY + 2.7, z - 0.05, z + 0.05, STEEL, 'NSEW'); phys.addCylinder(x, z, 0.1, IY - 1, IY + 2.7);
-    const uv = sticker(ctx, A, n + '番', '#2f64b5', '#ffffff');
-    sb.board(x, z, fx, 0, 0.9, IY + 2.25, IY + 2.25 + 0.34, uv, 0.05); sb.board(x, z, -fx, 0, 0.9, IY + 2.25, IY + 2.25 + 0.34, uv, 0.05);
-  };
-  berth(ISLE[0] + 0.25, -173, 1, -1); berth(ISLE[0] + 0.25, -131, 2, -1); berth(ISLE[2] - 0.25, -173, 3, 1); berth(ISLE[2] - 0.25, -131, 4, 1);
-  { const uv = fasciaSign(ctx, A, 'バスのりば', 'BUS TERMINAL', 'navy'); for (const z of [-179.5, -120.5]) { const zz = z < -150 ? z - 0.02 : z + 0.02; sb.board(-299.5, zz, 0, z < -150 ? -1 : 1, 6, IY + 3.3, IY + 3.3 + 1.0, uv); mb.box(-302.6, -296.4, IY + 3.25, IY + 4.35, z - 0.05, z + 0.05, DARK, 'NSEWT'); } }
+  { const uv = fasciaSign(ctx, A, 'バスのりば', 'BUS TERMINAL', 'navy'); for (const z of [-179.5, -120.5]) { const zz = z < -150 ? z - 0.07 : z + 0.07; sb.board(-299.5, zz, 0, z < -150 ? -1 : 1, 6, IY + 3.3, IY + 3.3 + 1.0, uv); mb.box(-302.6, -296.4, IY + 3.25, IY + 4.35, z - 0.05, z + 0.05, DARK, 'NSEWT'); } }
   // ---------------------------------------------------------------- the pedestrian deck
   const T = G0 + DECK.h, B = T - 0.8, [hx, hz] = DECK.hub, R = DECK.R;
   mb.box(DECK.x0, DECK.x1, B, T, DECK.z0, DECK.z1, DECKC, 'NSEWT'); mb.box(DECK.x0, DECK.x1, B, B, DECK.z0, DECK.z1, DECK_U, 'B');
@@ -304,7 +332,7 @@ export function buildStation(ctx, kit) {
     phys.addCylinder(cx, cz, r0, g0 - 1, g0 + 0.55); }
   for (let k = 0; k < 3; k++) { const x = TAXI[0] - 3.4, z = -50 - k * 1.1, g0 = gy(x, z) + 0.15;   // vending machines by the taxi shelter
     mb.box(x - 0.4, x + 0.4, g0, g0 + 1.85, z - 0.5, z + 0.5, rgb(['#d9463b', '#2f64b5', '#f2efe6'][k]), 'NSEWT'); mb.box(x + 0.4, x + 0.42, g0 + 0.9, g0 + 1.7, z - 0.4, z + 0.4, rgb('#e8f0f4'), 'E'); phys.addBox(x, z, 0.8, 1.0, 0, g0 - 1, g0 + 1.85); }
-  for (const [x0, z0, x1, z1] of DRIVES) for (const z of [z0 - 0.6, z1 + 0.6]) for (let x = x0 + 1; x < x1; x += 2.5) { const g0 = gy(x, z) + 0.15; mb.box(x - 0.1, x + 0.1, g0, g0 + 0.8, z - 0.1, z + 0.1, rgb('#9aa3aa'), 'NSEWT'); }
+  for (const [x0, z0, x1, z1] of DRIVES) for (const z of [z0 - 0.6, z1 + 0.6]) for (let x = x0 + 1; x < x1 - 4.5; x += 2.5) { const g0 = gy(x, z) + 0.15; mb.box(x - 0.1, x + 0.1, g0, g0 + 0.8, z - 0.1, z + 0.1, rgb('#9aa3aa'), 'NSEWT'); }
   // ---------------------------------------------------------------- the west exit square (its furniture: westexit.js)
   paveRect(WEST, (x, z) => (x > WEST[2] - 10 ? 'gran' : 'tile'));
   sb.board(-561.62, -152, -1, 0, 9, G0 + 4.72, G0 + 4.72 + 9 * 112 / 768, (() => { const f = ctx.tex.FONTS; return A.cell('station-west', 768, 112, (g, w, h) => { g.fillStyle = '#f7f6f2'; g.fillRect(0, 0, w, h); g.fillStyle = '#e64980'; g.fillRect(0, h - 10, w, 10); g.fillStyle = '#1f2a44'; g.textAlign = 'center'; g.textBaseline = 'middle'; ctx.tex.fitText(g, '花渡駅 西口', w / 2, 44, w * 0.8, 64, f.sans, 900); g.fillStyle = '#55606f'; ctx.tex.fitText(g, 'HANAWATARI STATION  West Exit  ·  路面電車 花渡駅西口', w / 2, 90, w * 0.9, 17, f.en, 700); }); })());

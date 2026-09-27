@@ -57,6 +57,7 @@ export function buildChunkRoads(ctx, R, U, ci, cj) {
   const surf = new MB(), mark = new MB(), N = network();
   // ---- ribbons
   for (const w of N.ways) {
+    if (w.st && w.st.station) continue;                                            // the station paves its own drives
     const A = w.align, bx = breaks(w), asph = asphaltOf(w), tram = w.R && w.R.id === 'honcho';
     // quick reject: is any part of this way near the chunk?
     const bb = w._bb || (w._bb = (() => { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const p of A.samples) { a = Math.min(a, p.x); b = Math.min(b, p.z); c = Math.max(c, p.x); d = Math.max(d, p.z); } return [a - 30, b - 30, c + 30, d + 30]; })());
