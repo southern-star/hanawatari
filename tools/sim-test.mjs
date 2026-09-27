@@ -1,0 +1,47 @@
+// Run the traffic and the people for a while at a place, headless, and report what they did.
+// usage: node tools/sim-test.mjs [x,z,seconds]      e.g. node tools/sim-test.mjs -300,-150,60   (the station)
+//  • vehicles: count, mean speed, stuck > 60 s, red-light runs, overlapping vehicles
+//  • people: count by kind and where they are, crossing on a red walk light, cars over people, the longest wait
+//  • ms per simulation step for each
+import { serve, launch, openCity } from './lib/headless.mjs';
+
+const [px, pz, secs] = (process.argv[2] || '-47,-126,90').split(',').map(Number);
+const { server, port } = await serve();
+const browser = await launch({ width: 640, height: 400 });
+try {
+  const { page, logs } = await openCity(browser, port, `${px},${pz},0,0`);
+  const res = await page.evaluate((secs) => {
+    const T = window.__traffic, Pd = window.__peds, S = window.__ctx, P = S.player.position, sig = T.signals;
+    let t = S.time || 0, msT = 0, msP = 0, redRun = 0, overlaps = 0, hits = 0, redCross = 0, maxWait = 0, nan = 0;
+    const waits = new Map();
+    for (let i = 0; i < secs * 10; i++) {
+      const a = performance.now(); T.update(0.1, t, P); const b = performance.now(); Pd.update(0.1, t, P); const c = performance.now();
+      msT += b - a; msP += c - b; t += 0.1;
+      for (const v of T.veh) {
+        const L = v.el.link;
+        if (L && L.control === 'signal') { const was = v._pu ?? v.u; if (was <= L.stopAt && v.u > L.stopAt && sig.vehState(L.node.id, L.group, t - 1.2) === 'r' && sig.vehState(L.node.id, L.group, t) === 'r') redRun++; }
+        v._pu = v.u; if (v._pel !== v.el) { v._pu = -1; v._pel = v.el; }
+      }
+      if (i % 10 === 0) for (let x = 0; x < T.veh.length; x++) for (let y = x + 1; y < T.veh.length; y++) { const A = T.veh[x], B = T.veh[y]; if (Math.hypot(A.x - B.x, A.z - B.z) < 1.6) overlaps++; }
+      if (i % 5 === 0) for (const p of Pd.peds) {
+        if (!isFinite(p.x) || !isFinite(p.z)) nan++;
+        for (const v of T.veh) {
+          if (Math.abs(v.x - p.x) > 6 || Math.abs(v.z - p.z) > 6) continue;
+          const hx = Math.sin(v.yaw), hz = Math.cos(v.yaw), o = v.fo + v.wb / 2 - v.L / 2, dx = p.x - v.x - hx * o, dz = p.z - v.z - hz * o;
+          if (Math.abs(dx * hx + dz * hz) < v.L / 2 && Math.abs(-dx * hz + dz * hx) < v.W / 2 && Math.abs(p.y - v.y) < 2) hits++;
+        }
+        if (p.state === 'wait') { const w = (waits.get(p) || 0) + 0.5; waits.set(p, w); maxWait = Math.max(maxWait, w); } else waits.delete(p);
+        if (p.state === 'cross' && p.e.zone && p.e.zone.kind === 'zebra' && !p._cz) { p._cz = 1; if (sig.pedState(p.e.zone.nd.id, p.e.zone.group, t) === 'stop') redCross++; }
+        if (p.state !== 'cross') p._cz = 0;
+      }
+    }
+    const count = (arr, f) => { const o = {}; for (const x of arr) { const k = f(x); o[k] = (o[k] || 0) + 1; } return o; };
+    const sp = T.veh.map(v => v.v);
+    return {
+      vehicles: { n: T.veh.length, meanKmh: +(sp.reduce((a, b) => a + b, 0) / Math.max(1, sp.length) * 3.6).toFixed(1), stuck60s: T.veh.filter(v => v.stopped > 60).length, redRuns: redRun, overlaps, msPerStep: +(msT / (secs * 10)).toFixed(2), types: count(T.veh, v => v.name) },
+      people: { n: Pd.peds.length, regulars: Pd.fixed.length, states: Pd.stats(), kinds: count(Pd.peds, p => p.bike ? 'bike' : p.L.kind), on: count(Pd.peds, p => p.e.kind), redWalkCrossings: redCross, carsOverPeople: hits, maxWaitS: maxWait, nan, msPerStep: +(msP / (secs * 10)).toFixed(2) },
+    };
+  }, secs);
+  console.log(JSON.stringify(res, null, 1));
+  if (logs.length) console.log(logs.slice(0, 10).join('\n'));
+} finally { await browser.close(); server.close(); }

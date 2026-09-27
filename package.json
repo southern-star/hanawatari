@@ -1,0 +1,19 @@
+{
+  "name": "hanawatari",
+  "version": "0.1.0",
+  "description": "花渡市 — a walkable, anime cel-shaded Japanese city generated in plain three.js: a station town with living traffic, trains and people",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "serve": "node tools/serve.mjs",
+    "check": "node tools/plan-check.mjs",
+    "shot": "node tools/shot.mjs",
+    "sim-test": "node tools/sim-test.mjs"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.11.1",
+    "three": "0.170.0"
+  }
+}
