@@ -16,10 +16,11 @@ import { Signals } from './city/signals.js';
 import { Traffic } from './city/traffic.js';
 import { Pedestrians } from './city/pedestrians.js';
 import { Rotary } from './city/rotary.js';
+import { RoboTaxi } from './city/robotaxi.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.has('shot');
-let world = null, trains = null, map = null, crossings = null, signals = null, traffic = null, peds = null, rotary = null;
+let world = null, trains = null, map = null, crossings = null, signals = null, traffic = null, peds = null, rotary = null, robo = null;
 const $ = (id) => document.getElementById(id);
 const SUN_DIR = [-0.776, 0.517, 0.362];   // from the west-south-west, ~31° up: a spring afternoon around 16:00
 
@@ -146,6 +147,7 @@ function stepUpdates(dt, t) {
   if (traffic) traffic.update(dt, t, ctx.player.position);
   if (rotary) rotary.update(dt);
   if (peds) peds.update(dt, t, ctx.player.position);
+  if (robo) robo.update(dt);
   for (const fn of ctx._updates) { try { fn(dt, t); } catch (e) { if (!fn.__err) { fn.__err = 1; console.error('update error', e); errors.push({ module: 'update', message: String(e && e.stack || e) }); } } }
 }
 /** GPU benchmark: renders n frames back-to-back (forcing sync) and returns ms/frame + counts. */
@@ -159,7 +161,10 @@ window.__bench = (n = 30) => {
   return { ms: +ms.toFixed(2), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs?.length, chunks: world ? world.chunks.size : 0 };
 };
 /** Debug: advance the simulation by n steps of dt (for frame-by-frame captures). */
-window.__step = (dt, n = 1) => { for (let i = 0; i < n; i++) { simT += dt; stepUpdates(dt, simT); } };
+window.__step = (dt, n = 1) => {
+  for (let i = 0; i < n; i++) { simT += dt; stepUpdates(dt, simT); }
+  if (robo && robo.riding && world) { world.update(player.pos.x, player.pos.z, Infinity); ctx.physics.refreshDynamic(); }   // (a ride in a capture)
+};
 window.__sim = (target) => { let t = 0; const dt = 1 / 30; while (t < target) { stepUpdates(dt, t); t += dt; } simT = target; stepUpdates(0, simT); };
 
 // ------------------------------------------------------------------ HUD
@@ -187,11 +192,12 @@ function frame(now) {
   requestAnimationFrame(frame);
   let dt = Math.min(0.1, (now - last) / 1000); last = now;
   if (SHOT) dt = 0;
-  simT += dt;
-  if (!SHOT) player.update(dt);
+  if (!SHOT && !(robo && robo.riding)) player.update(dt);
   if (!SHOT && world) world.update(player.pos.x, player.pos.z, 5);
   ctx.physics.refreshDynamic();
-  stepUpdates(dt, simT);
+  // (riding the robotaxi with fast-forward on: the world runs faster, in small steps)
+  const k = robo ? robo.scale : 1, n = k > 1 ? Math.ceil(dt * k / 0.05) : 1;
+  for (let i = 0; i < n; i++) { simT += dt * k / n; stepUpdates(dt * k / n, simT); }
   try { audio.update(camera, dt); } catch (e) { if (!audio.__err) { audio.__err = 1; console.error('audio', e); } }
   sky.update(simT, camera);
   renderer.info.reset();
@@ -222,6 +228,9 @@ function start() {
 
 async function main() {
   try { await build(); } catch (e) { console.error(e); errors.push({ module: 'build', message: String(e && e.stack || e) }); }
+  // the robotaxi (the map comes later: reach it when it's there)
+  const mapProxy = { pick: (t, cb) => map && map.pick(t, cb), setRoute: (p) => map && map.setRoute(p), setOpen: (v) => map && map.setOpen(v), get open() { return !!(map && map.open); } };
+  if (traffic) { robo = new RoboTaxi(ctx, { traffic, player, places: Object.values(VIEWS), toast: showToast, map: mapProxy, placeAt: (x, z) => world.placeAt(x, z) }); window.__robo = robo; }
   if (params.get('cam')) parseCam(params.get('cam')); else player.setPose(START.x, START.z, START.yaw, START.pitch);
   if (params.has('fly')) player.fly = true;
   window.__sim(simT);
@@ -239,16 +248,19 @@ async function main() {
   addEventListener('keydown', (e) => {
     if (e.code === 'Enter' && !started) start();
     if (!started) return;
+    if (robo && !(map && map.open) && robo.key(e)) { e.preventDefault(); return; }
     if (e.code === 'KeyH') document.body.classList.toggle('noui');
     if (e.code === 'KeyM') { audio.muted = !audio.muted; const b = $('mute'); if (b) b.setAttribute('aria-pressed', String(audio.muted)); }
-    if (e.code === 'KeyR') player.setPose(START.x, START.z, START.yaw, START.pitch);
+    if (e.code === 'KeyR') { if (robo && robo.riding) return; player.setPose(START.x, START.z, START.yaw, START.pitch); }
     if (e.code === 'Backquote') { const s = $('stats'); if (s) s.hidden = !s.hidden; }
     const v = VIEWS[e.code];
-    if (v && !(map && map.open)) travel(v);
-    if (e.code === 'Tab') { e.preventDefault(); map.toggle(); player.enabled = !map.open; if (map.open && document.pointerLockElement) document.exitPointerLock(); }
-    if (e.code === 'Escape' && map.open) { map.setOpen(false); player.enabled = true; }
+    if (v && !(map && map.open) && !(robo && robo.riding)) travel(v);
+    const riding = robo && robo.riding;
+    if (e.code === 'Tab') { e.preventDefault(); map.toggle(); player.enabled = !map.open && !riding; if (map.open && document.pointerLockElement) document.exitPointerLock(); }
+    if (e.code === 'Escape' && map.open) { map.setOpen(false); player.enabled = !riding; }
   });
-  map = createMap({ plan: PLAN, urban: world.U, player, places: Object.values(VIEWS), onTravel: (p) => { travel(p); map.setOpen(false); player.enabled = true; } });
+  map = createMap({ plan: PLAN, urban: world.U, player, places: Object.values(VIEWS), onTravel: (p) => { if (robo && robo.riding) return; travel(p); map.setOpen(false); player.enabled = true; } });
+  const roboBtn = $('roboBtn'); if (roboBtn) roboBtn.addEventListener('click', () => { if (started) robo.key({ code: 'KeyT' }); });
   const mapBtn = $('mapBtn'); if (mapBtn) mapBtn.addEventListener('click', () => { if (!started) return; map.toggle(); player.enabled = !map.open; });
   const q = $('quality');
   if (q) { q.value = qName; q.addEventListener('change', () => { try { localStorage.setItem('hanawatari.q', q.value); } catch (e) {} location.reload(); }); }

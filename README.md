@@ -14,6 +14,7 @@ A walkable, first-person **anime cel-shaded Japanese city** in plain [three.js](
 | ![駅前広場 · the station square and deck](docs/images/station-square.jpg) | ![街の全景 · the city](docs/images/overview.jpg) |
 | ![人 · people](docs/images/people.jpg) | ![タクシー · a taxi and its driver](docs/images/taxi.jpg) |
 | ![バスターミナル · the bus terminal](docs/images/bus-terminal.jpg) | ![バスの出入口 · the terminal's drive at the lights](docs/images/bus-drive.jpg) |
+| ![ロボタクシー · the robotaxi](docs/images/robotaxi.jpg) | ![ロボタクシーの車内から · from the robotaxi's front seat](docs/images/robotaxi-seat.jpg) |
 
 ## 特徴 · Features
 
@@ -28,6 +29,10 @@ A walkable, first-person **anime cel-shaded Japanese city** in plain [three.js](
   - バスは信号のある交差点から入り、降車場で客を降ろしてから、自分の乗り場で列の人を乗せて発車します。乗り場の手前で左ウインカー、発車のときは右ウインカーを出します
   - タクシーは乗り場の列に並び、先頭の車に客が乗ると出ていきます
   - 降りた人は島の歩道を歩いて街へ散っていき、乗り場の列には通りかかった人が並びます
+- **ロボタクシー**：<kbd>T</kbd> で呼ぶと、無人の自動運転タクシーがいちばん近い路肩まで迎えに来ます。乗り込めば、信号や人の横断を守りながら最短の道で行き先まで走ります。
+  - 行き先は名所の一覧、地図の好きな地点、名所をめぐる「おまかせ観光」から選べます
+  - 視点は助手席、後ろから、上空からの3つ。早送り（×3、×6）もできます
+  - 途中で「ここで降りる」と、少し先で路肩に寄せて停まります
 - **鉄道**：高架と地上の路線、路面電車、踏切（遮断機と警報音付き）があります。
 - **交通**：車線網の上を追従モデル（IDM）で走ります。
   - 信号、右折待ち、一時停止、合流、踏切、車線変更、ウインカーとブレーキランプ
@@ -43,6 +48,7 @@ A walkable, first-person **anime cel-shaded Japanese city** in plain [three.js](
 
 - **A 3 km city** round 花渡 station: the station front, a shopping arcade, old town, rivers and canals, a hill park, a temple quarter, hillside houses. The surroundings are built as you walk.
 - **The station**: a free passage with ticket gates, the east square (bus terminal, taxi rank, pedestrian deck), the west square, a drinking alley under the viaduct.
+- **A robotaxi**: press <kbd>T</kbd> and a driverless taxi comes to the nearest kerb. It drives you by the quickest way, keeping to the lights and giving way to people, to a named place, a point on the map, or round a sightseeing loop. Ride in the front seat, or watch from behind or above; fast-forward ×3 / ×6; ask it to pull in whenever you like.
 - **The rotary at work**: buses come in at the lights, let their passengers off at the arrivals berth, pull up at their own berth, take on the queue and leave; taxis wait in line at the rank and leave with a fare. People getting off walk away into the town; the queues are made of people passing by.
 - **Railways**: elevated and surface lines, a tram, level crossings with barriers and bells.
 - **Traffic** on a lane graph with the Intelligent Driver Model: signals, right turns waiting for a gap, stop signs, merging, level crossings, lane changes, indicators and brake lamps. 13 car models and 4 two-wheelers; 50 cc scooters keep to 30 km/h and don't turn right at big junctions.
@@ -68,6 +74,9 @@ Open <http://localhost:5173>. three.js and the fonts load from jsDelivr and Goog
 | Space | ジャンプ · jump |
 | F | 飛行モード（E / Q で上下）· fly (E / Q up and down) |
 | 1 – 9 | 名所へ移動 · go to a place |
+| T | ロボタクシーを呼ぶ（行き先を選ぶ）／キャンセル · call a robotaxi (where to?) / cancel |
+| E | ロボタクシーに乗る／ここで降りる · get in / get out here |
+| V / X | 乗車中の視点／早送り · riding: the view / fast-forward |
 | Tab | 地図 · map |
 | R | スタート地点へ · back to the start |
 | H / M | UI を隠す / 消音 · hide the UI / mute |

@@ -34,7 +34,8 @@ const TYPES = [
   { name: 'van', road: 5, street: 4, paint: 'work', a: 1.3, b: 2.1, T: 1.4, s0: 2.2, vf: 0.95 },
   { name: 'keiTruck', road: 3, street: 6, paint: 'work', a: 1.2, b: 2.0, T: 1.4, s0: 2.2, vf: 0.9 },
   { name: 'boxTruck', road: 4, street: 0.5, paint: 'work', a: 0.9, b: 1.8, T: 1.6, s0: 2.5, vf: 0.9 },
-  { name: 'bus', road: 2.5, street: 0, paint: 'bus', a: 0.8, b: 1.6, T: 1.7, s0: 2.5, vf: 0.85 },
+  { name: 'bus', road: 2.5, street: 0, paint: 'bus', a: 0.8, b: 1.6, T: 1.7, s0: 2.5, vf: 0.85, bus: true },
+  { name: 'robotaxi', road: 0, street: 0, paint: 'robotaxi', a: 1.9, b: 2.4, T: 1.2, s0: 2.2, vf: 1.02 },          // (only when called: city/robotaxi.js)
   // two-wheelers: 50 cc ones keep to 30 km/h and don't turn right across big junctions (二段階右折); all keep left in the lane
   { name: 'scooter', road: 3, street: 5, paint: 'moto', a: 1.5, b: 2.6, T: 1.0, s0: 1.6, vf: 0.95, vcap: 8.3, moto: true },
   { name: 'cub', road: 1.5, street: 3, paint: 'cub', a: 1.4, b: 2.6, T: 1.0, s0: 1.6, vf: 0.95, vcap: 8.3, moto: true },
@@ -50,7 +51,7 @@ export class Traffic {
   constructor(ctx, { signals, crossings } = {}) {
     this.ctx = ctx; this.signals = signals; this.crossings = crossings;
     this.G = buildLanes();
-    this.render = new VehicleRenderer(ctx, { keiWagon: 110, keiHatch: 60, compact: 110, sedan: 80, minivan: 100, suv: 60, taxi: 60, taxiSedan: 30, police: 6, van: 40, keiTruck: 40, boxTruck: 30, bus: 16, scooter: 36, cub: 24, delivery: 14, bike250: 24 });
+    this.render = new VehicleRenderer(ctx, { keiWagon: 110, keiHatch: 60, compact: 110, sedan: 80, minivan: 100, suv: 60, taxi: 60, taxiSedan: 30, police: 6, van: 40, keiTruck: 40, boxTruck: 30, bus: 16, robotaxi: 4, scooter: 36, cub: 24, delivery: 14, bike250: 24 });
     this.root = this.render.root;
     this.dims = {}; for (const T of TYPES) this.dims[T.name] = this.render.dims(T.name);
     this.veh = []; this.parked = []; this.rng = prng(0x7aff1c); this.nextId = 1; this.spawnT = 0; this.center = null; this.t = 0; this.count = {};
@@ -65,6 +66,7 @@ export class Traffic {
     ctx.physics.addDynamic(() => {
       const P = ctx.player && ctx.player.position, out = []; if (!P) return out;
       // (the body's middle lies off the axles' by the difference of the overhangs)
+      if (ctx.riding) return out;
       const box = (v) => { const o = v.fo + v.wb / 2 - v.L / 2; out.push({ cx: v.x + Math.sin(v.yaw) * o, cz: v.z + Math.cos(v.yaw) * o, w: v.W, d: v.L, rotY: v.yaw, y0: v.y - 1, y1: v.y + v.H }); };
       for (const v of this.veh) if (Math.abs(v.x - P.x) < 18 && Math.abs(v.z - P.z) < 18) box(v);
       for (const v of this.parked) if (Math.abs(v.x - P.x) < 18 && Math.abs(v.z - P.z) < 18) box(v);
@@ -151,7 +153,8 @@ export class Traffic {
       if (!cf.yields) continue;
       if (c.kind === 'R' && L.control === 'signal' && !cf.merge) continue;          // waits inside the junction instead
       // the gap it needs: to get through (from a standstill it takes a while) plus a margin
-      const need = Math.min(8, (cf.ua + v.L) / Math.max(v.v, 1.2) * (v.v < 2 ? 0.8 : 1) + (cf.merge ? 2.0 : 1.5));
+      let need = Math.min(8, (cf.ua + v.L) / Math.max(v.v, 1.2) * (v.v < 2 ? 0.8 : 1) + (cf.merge ? 2.0 : 1.5));
+      if (v.robo) need *= v.stopped > 6 ? 0.5 : 0.75;                                      // (the robotaxi takes a smaller gap: it is in a hurry)
       if (this.approaching(c2, cf.ub, t, need)) return false;
     }
     return true;
@@ -212,7 +215,8 @@ export class Traffic {
       const L = el.link;
       // a stop on this lane (a bus berth, the head of the taxi queue): pull up there, wait till it may go
       const st = v.stops && v.stops[0];
-      if (st && st.lane === el) {
+      if (st && st.anyLane && st.lane.link === L && st.lane !== el && !v.target && st.u - v.u > 12) v.target = st.lane;   // over to the kerb
+      if (st && (st.lane === el || (st.anyLane && st.lane.link === L))) {
         const dist = st.u - v.u;
         if (dist < 1.2 && v.v < 0.3) {
           if (!st.at) { st.at = true; st.t = 0; if (st.arrive) st.arrive(v, st); }
@@ -240,6 +244,8 @@ export class Traffic {
     }
     const c = el;
     let d = Infinity;
+    // (held inside the junction for long: everyone waiting on everyone — clear the junction)
+    if (v.stopped > 12 && v.u > 0.5) return Infinity;
     // in the junction: before each crossing point, let whoever gets there first (or has the right of way) go first
     for (const cf of c.conflicts) {
       if (v.u > cf.ua - (cf.merge ? v.L + 1 : 2.5)) continue;
@@ -285,13 +291,13 @@ export class Traffic {
   /** Choose the connector at the end of lane `ln`'s link; returns it (and sets v.target when another lane is needed). */
   route(v, ln) {
     const L = ln.link, opts = [];
-    // on the way somewhere (v.plan: the links to reach, in turn): the connector on the shortest way to the next
+    // on the way somewhere (v.plan: the links to reach, in turn): the connector on the quickest way to the next
     if (v.plan && v.plan.length) {
-      const D = this.distTo(v.plan[0], v.type.street === 0);
+      const D = this.timeTo(v.plan[0], !!v.type.bus);
       let pick = null, best = Infinity;
       for (const l of L.lanes) for (const c of l.out) {
         const d = D[c.to.link.id]; if (!(d < Infinity)) continue;
-        const cost = c.len + d + (l === ln ? 0 : L.len < 35 ? 40 : 8);
+        const cost = c.len / Math.max(2, c.vmax) + d + (l === ln ? 0 : L.len < 35 ? 25 : 4) + (c.kind === 'U' ? 25 : 0);
         if (cost < best) { best = cost; pick = c; }
       }
       if (pick) { v.next = pick; v.target = pick.from === ln ? null : pick.from; v.waitLC = 0; v.blink = pick.kind === 'L' ? 1 : pick.kind === 'R' ? 2 : 0; return pick; }
@@ -302,7 +308,7 @@ export class Traffic {
       const Lo = c.to.link;
       if (Lo.private && !L.private) continue;                                              // the station's own lanes
       let w = TURN_W[c.kind] * (CLASS_W[Lo.cls] ?? 0.4);
-      if (Lo.cls === 'street' && v.type.street === 0) w *= 0.01;                          // buses keep to the roads
+      if (Lo.cls === 'street' && v.type.bus) w *= 0.01;                                     // buses keep to the roads
       const end = c.to.link.to; if (!end || (end.plain && end.arms.length < 2)) w *= 0.03;   // into a dead end / off the map
       if (Lo.way === L.way) w *= 1.8;                                                      // carry on along the same way
       if (l !== ln && c.kind !== 'S' && L.len < 35) w *= 0.15;                             // no time to change lanes
@@ -321,11 +327,23 @@ export class Traffic {
   /** Driving distances to link `goal` from every link (cached): buses keep off the streets; nobody passes through the
    *  station's private lanes except to a goal among them. */
   distTo(goal, bus = false) {
-    const key = goal.id * 2 + (bus ? 1 : 0);
+    const key = goal.id * 4 + (bus ? 1 : 0);
     let D = this._dist.get(key);
-    if (!D) { D = linkDist(goal, (L) => (!L.private || L.private === goal.private) && !(bus && L.cls === 'street' && !L.private)); this._dist.set(key, D); }
+    if (!D) { D = linkDist(goal, this.allowTo(goal, bus)); this._dist.set(key, D); }
     return D;
   }
+  /** The same in seconds (roughly: the way at most of the limit, a wait at lights and stops, streets slower still). */
+  timeTo(goal, bus = false) {
+    const key = goal.id * 4 + 2 + (bus ? 1 : 0);
+    let D = this._dist.get(key);
+    if (!D) {
+      const wait = { signal: 12, stop: 6, yield: 3 };
+      D = linkDist(goal, this.allowTo(goal, bus), (L, cl, u) => (L.len + cl) / (L.vmax * 0.8) * (L.cls === 'street' ? 1.35 : 1) + (wait[L.control] || 0) + (L.penalty || 0) / 5 + (u ? 25 : 0));
+      this._dist.set(key, D);
+    }
+    return D;
+  }
+  allowTo(goal, bus) { return (L) => (!L.private || L.private === goal.private) && !(bus && L.cls === 'street' && !L.private); }
   tryLaneChange(v) {
     const el = v.el, L = el.link, tk = v.target.k, k = el.k, step = tk > k ? 1 : -1, to = L.lanes[k + step];
     if (!to) { v.target = null; return; }
@@ -447,6 +465,16 @@ export class Traffic {
       let a = v.a * (1 - Math.pow(v.v / Math.max(v0, 0.1), 4));
       // a slower connector ahead: arrive at its speed
       if (el.link && v.next) { const dc = el.len - v.u, vc = v.next.vmax * v.vf; if (vc < v.v && dc < 60) a = Math.min(a, (vc * vc - v.v * v.v) / (2 * Math.max(dc, 1)) * 1.2); }
+      // the robotaxi, held for long (not by the lights nor its own stop): it slips through (realism relaxed)
+      if (v.robo && !warm) {
+        const st = v.stops && v.stops[0], red = el.link && el.link.control === 'signal' && this.signals && this.signals.vehState(el.link.node.id, el.link.group, t) !== 'g' && el.link.stopAt - v.u < 40;
+        if (v.stopped > 25 && !red && !(st && st.at)) v.ghost = 6;
+        if (v.ghost > 0) {
+          v.ghost -= dt;
+          if (st && el.link && (st.lane === el || (st.anyLane && st.lane.link === el.link)) && st.u - v.u > -2) a = Math.min(a, this.idm(v, v0, Math.max(0.05, st.u - v.u), 0, 0.4));
+          v.acc = Math.max(-8, Math.min(v.a, a)); continue;
+        }
+      }
       const [gap, vl] = this.leader(v);
       if (gap < Infinity) a = Math.min(a, this.idm(v, v0, gap, vl));
       const ds = this.stopAhead(v, t);
@@ -455,7 +483,7 @@ export class Traffic {
       const sp = this.streetPeds(v);
       if (sp) { if (sp.slow) { v0 = Math.min(v0, 3.2); a = Math.min(a, v.a * (1 - Math.pow(v.v / 3.2, 4))); } if (sp.best < Infinity) a = Math.min(a, this.idm(v, v0, Math.max(0.05, sp.best), 0, 0.5)); }
       // the player standing in the way
-      if (P && !warm && Math.abs(P.x - v.x) < 30 && Math.abs(P.z - v.z) < 30) {
+      if (P && !warm && !this.ctx.riding && Math.abs(P.x - v.x) < 30 && Math.abs(P.z - v.z) < 30) {
         const hx = Math.sin(v.yaw), hz = Math.cos(v.yaw), dx = P.x - v.x, dz = P.z - v.z, along = dx * hx + dz * hz - v.fo - v.wb / 2, side = Math.abs(-dx * hz + dz * hx);
         if (along > -0.5 && along < 25 && side < v.W / 2 + 0.6) a = Math.min(a, this.idm(v, v0, Math.max(0.05, along - 1.2), 0, 0.5));
       }
@@ -495,7 +523,7 @@ export class Traffic {
       if (!warm) this.place(v);
       // leave: out of the circle, off the map, stuck for long far away
       const dp = Math.hypot(v.x - px, v.z - pz);
-      if (dp > R_SIM + 60 || (!this.inMap(v.x, v.z) && dp > 80) || (v.stopped > 45 && dp > 120 && !v.station)) this.remove(v);
+      if (dp > R_SIM + 60 || (!this.inMap(v.x, v.z) && dp > 80) || (v.stopped > 45 && dp > 120 && !v.station && !v.robo)) this.remove(v);
     }
     for (const h of this.hooks) if (h.step) h.step(dt, t, warm);
     // top up now and then (never in sight of the player)
@@ -521,9 +549,10 @@ export class Traffic {
       const brake = v.acc < -1.2 || (v.v < 0.3 && v.stopped > 0.3) ? 1 : 0;
       v.brake = dt > 0 ? v.brake + (brake - v.brake) * Math.min(1, dt * 12) : brake;
       const near = v.el.link && v.next && v.next.kind !== 'S' && v.el.len - v.u < 35, onTurn = !v.el.link && v.el.kind !== 'S';
-      const st = v.stops && v.stops[0], pulling = st && st.lane === v.el && st.u - v.u < 22 && st.blink !== false;
+      const st = v.stops && v.stops[0], pulling = st && (st.lane === v.el || (st.anyLane && st.lane.link === v.el.link)) && st.u - v.u < 22 && st.blink !== false;
       const side = v.lcBlink || (pulling ? 1 : (near || onTurn) ? v.blink : 0);
-      R.add(v.name, v.x, v.y, v.z, v.yaw, v.pitch, v.color, v.brake, side === 1 && blinkOn ? 1 : 0, side === 2 && blinkOn ? 1 : 0, v.spin, v.steer, v.plate, v.roll || 0);
+      const hz = v.hazard && blinkOn;
+      R.add(v.name, v.x, v.y, v.z, v.yaw, v.pitch, v.color, v.brake, (side === 1 && blinkOn) || hz ? 1 : 0, (side === 2 && blinkOn) || hz ? 1 : 0, v.spin, v.steer, v.plate, v.roll || 0);
     }
     for (const v of this.parked) R.add(v.name, v.x, v.y, v.z, v.yaw, 0, v.color, 0, 0, 0, 0, 0, v.plate);
     R.end();

@@ -443,7 +443,7 @@ export class Pedestrians {
       // on a street without sidewalks: to the very edge when a car comes along
       if (e.kind === 'edge' && e.way && !warm && this.carNear(p, e)) p.latT = e.side * e.hw * p.dir;
       // the player
-      if (P && !warm && Math.abs(P.x - p.x) < 4 && Math.abs(P.z - p.z) < 4) {
+      if (P && !warm && !this.ctx.riding && Math.abs(P.x - p.x) < 4 && Math.abs(P.z - p.z) < 4) {
         const hx = Math.sin(p.yaw), hz = Math.cos(p.yaw), dx = P.x - p.x, dz = P.z - p.z, along = dx * hx + dz * hz, side = -dx * hz + dz * hx;   // side > 0: the player on p's right
         if (along > -0.3 && along < 2.6 && Math.abs(side) < 0.75) {
           p.latT = Math.max(-hw, Math.min(hw, p.lat + (side > 0 ? -0.9 : 0.9)));

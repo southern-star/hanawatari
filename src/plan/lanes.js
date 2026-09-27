@@ -229,23 +229,28 @@ export function buildLanes() {
   }
   LANES = { links, lanes, connectors, linksAt, grid, CELL, private: priv };
   // (from each link: the links its connectors lead to, for route finding)
-  for (const L of links) { const m = new Map(); for (const l of L.lanes) for (const c of l.out) { const o = m.get(c.to.link); if (o === undefined || c.len < o) m.set(c.to.link, c.len); } L.succ = [...m]; }
+  for (const L of links) {
+    const m = new Map();
+    for (const l of L.lanes) for (const c of l.out) { const o = m.get(c.to.link), u = c.kind === 'U'; if (!o || c.len < o[0] || (o[1] && !u)) m.set(c.to.link, [c.len, u]); }
+    L.succ = [...m].map(([M, [cl, u]]) => [M, cl, u]);                                   // (u: only by turning round at a dead end)
+  }
   return LANES;
 }
 
 /** Route finding: the driving distance from the start of every link to the start of `goal` (Infinity: can't get there),
- *  by Dijkstra over the links backwards. allow(L): may a route use link L (the goal itself always may). */
-export function linkDist(goal, allow = () => true) {
+ *  by Dijkstra over the links backwards. allow(L): may a route use link L (the goal itself always may); cost(L, cl): what
+ *  driving along L and on through a connector cl long costs (default: the distance, and a bay's detour). */
+export function linkDist(goal, allow = () => true, cost = (L, cl, u) => L.len + cl + (L.penalty || 0) + (u ? 60 : 0)) {
   const G = LANES, n = G.links.length, D = new Float64Array(n).fill(Infinity);
-  if (!G.pred) { G.pred = G.links.map(() => []); for (const L of G.links) for (const [M, cl] of L.succ) G.pred[M.id].push([L, cl]); }
+  if (!G.pred) { G.pred = G.links.map(() => []); for (const L of G.links) for (const [M, cl, u] of L.succ) G.pred[M.id].push([L, cl, u]); }
   const heap = [[0, goal.id]]; D[goal.id] = 0;
   const push = (d, i) => { heap.push([d, i]); let k = heap.length - 1; while (k > 0) { const p = (k - 1) >> 1; if (heap[p][0] <= heap[k][0]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; } };
   const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let k = 0; for (;;) { const l = 2 * k + 1, r = l + 1; let m = k; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; k = m; } } return top; };
   while (heap.length) {
     const [d, i] = pop(); if (d > D[i]) continue;
-    for (const [L, cl] of G.pred[i]) {
+    for (const [L, cl, u] of G.pred[i]) {
       if (L !== goal && !allow(L)) continue;
-      const nd = d + L.len + cl + (L.penalty || 0); if (nd < D[L.id]) { D[L.id] = nd; push(nd, L.id); }
+      const nd = d + cost(L, cl, u); if (nd < D[L.id]) { D[L.id] = nd; push(nd, L.id); }
     }
   }
   return D;

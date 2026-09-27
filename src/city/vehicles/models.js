@@ -330,6 +330,26 @@ const lightbar = ({ P, yr, zws1, zrw1 }) => {                                  /
 const antenna = ({ P, yr, zrw1 }) => P.fixed.box(-0.01, 0.01, yr, yr + 0.2, zrw1 + 0.06, zrw1 + 0.08, TRIM, 'NSEW');
 const sharkFin = ({ P, yr, zrw1 }) => P.fixed.box(-0.03, 0.03, yr + 0.03, yr + 0.08, zrw1 + 0.08, zrw1 + 0.22, TRIM, 'NSEWT');
 const roofRails = ({ P, yr, zws1, zrw1, hwr }) => { for (const sx of [-1, 1]) P.fixed.box(sx * (hwr - 0.1) - 0.02, sx * (hwr - 0.1) + 0.02, yr + 0.01, yr + 0.06, zrw1 + 0.1, zws1 - 0.15, TRIM_G, 'NSEWT'); };
+const ROBO = rgb('#1fc6b2');
+/** A robotaxi's roof: the sensor rack with its status light (lit teal all round), the LiDAR drum up front on a stalk,
+ *  cameras at the rack's corners; a teal line along the doors. */
+const roboRoof = ({ P, keys, yr, zws1, zrw1, hwr, zf, zr }) => {
+  const DK = rgb('#26282e'), GREY = rgb('#d7dbde'), y0 = yr + 0.015, y1 = y0 + 0.075, z0 = zrw1 + 0.1, z1 = zws1 - 0.06, x = hwr - 0.1, e = 0.004;
+  P.fixed.box(-x, x, y0, y1, z0, z1, DK, 'NSEWT');
+  const b0 = y0 + 0.022, b1 = y0 + 0.052;
+  P.lamps.at(0).quadF([-x - e, b0, z1 + e], [x + e, b0, z1 + e], [x + e, b1, z1 + e], [-x - e, b1, z1 + e], ROBO, [0, 0, 1]);
+  P.lamps.quadF([x + e, b0, z0 - e], [-x - e, b0, z0 - e], [-x - e, b1, z0 - e], [x + e, b1, z0 - e], ROBO, [0, 0, -1]);
+  for (const sx of [-1, 1]) P.lamps.quadF([sx * (x + e), b0, z0], [sx * (x + e), b0, z1], [sx * (x + e), b1, z1], [sx * (x + e), b1, z0], ROBO, [sx, 0, 0]);
+  const cz = z1 - 0.32, r = 0.17, ya = y1 + 0.07, pt = (k, y) => [Math.sin(k / 8 * Math.PI * 2) * r, y, cz + Math.cos(k / 8 * Math.PI * 2) * r];
+  P.fixed.box(-0.06, 0.06, y1, ya, cz - 0.06, cz + 0.06, DK, 'NSEW');
+  for (let k = 0; k < 8; k++) {
+    const n = [Math.sin((k + 0.5) / 8 * Math.PI * 2), 0, Math.cos((k + 0.5) / 8 * Math.PI * 2)];
+    for (const [ya0, ya1, col] of [[ya, ya + 0.06, GREY], [ya + 0.06, ya + 0.13, DK], [ya + 0.13, ya + 0.2, GREY]]) P.fixed.quadF(pt(k, ya0), pt(k + 1, ya0), pt(k + 1, ya1), pt(k, ya1), col, n);
+  }
+  P.fixed.poly([...Array(8)].map((_, k) => pt(k, ya + 0.2)), GREY, [0, 1, 0]); P.fixed.poly([...Array(8)].map((_, k) => pt(k, ya)), DK, [0, -1, 0]);
+  for (const sx of [-1, 1]) for (const zz of [z0 + 0.06, z1 - 0.06]) P.fixed.box(sx * x - 0.05, sx * x + 0.05, y1, y1 + 0.06, zz - 0.05, zz + 0.05, DK, 'NSEWT');
+  for (const sx of [-1, 1]) onSide(P.fixed, sx, keys, zf - 0.55, zr + 0.45, 0.62, 0.68, ROBO, 0.004);
+};
 
 /** Move every part so the origin sits midway between the axles. */
 function shiftZ(P, dz) { for (const mb of Object.values(P)) for (let i = 2; i < mb.P.length; i += 3) mb.P[i] += dz; }
@@ -389,7 +409,7 @@ function car(o) {
   return { ...P, L, W, H: o.yr + 0.04, rt, tw, wb: o.wb, fo: zf - za, wheel: o.wheel ?? 'alloy',
     wheels: [[wx, za - shift], [-wx, za - shift], [wx, zb - shift], [-wx, zb - shift]],
     plates: [[bot + 0.28, zNose(bot + 0.28) + 0.013 - shift, 1, Math.atan2(rake, nt - nb)], [o.yt - 0.1 - 0.325, zr - 0.013 - shift, -1]],
-    driver: [driver[0], driver[1], driver[2] - shift] };
+    driver: o.noDriver ? null : [driver[0], driver[1], driver[2] - shift] };
 }
 
 // ------------------------------------------------------------------ the catalogue
@@ -412,6 +432,10 @@ export const MODELS = {
   taxi: () => car({ rake: 0.08, L: 4.4, W: 1.695, rt: 0.31, wb: 2.75, axleShift: -0.05, yn: 0.76, zh: 1.72, yh: 0.96, yb: 1.0, zws0: 1.02, zws1: 0.42, yr: 1.74, zrw1: -1.82, zrw0: -2.12, yt: 1.0,
     rc: 0.2, sh: 0.06, tb: 0.1, pa: 0.05, pb: [0.42], pc: 0.08, plate: 'green', lampW: 0.28, lampH: 0.16, lights: 'round', tailW: 0.14, wheel: 'cap',
     extras: [andon(...JPN_TAXI_SIGN), (x) => slidingDoor(x.P, x.keys, 0.12, -0.95, x.bot + 0.12, x.yb)] }),
+  // 自動運転タクシー: the JPN-Taxi-like body in pearl white, no driver, the sensor rack on the roof
+  robotaxi: () => car({ rake: 0.08, L: 4.4, W: 1.695, rt: 0.31, wb: 2.75, axleShift: -0.05, yn: 0.76, zh: 1.72, yh: 0.96, yb: 1.0, zws0: 1.02, zws1: 0.42, yr: 1.74, zrw1: -1.82, zrw0: -2.12, yt: 1.0,
+    rc: 0.2, sh: 0.06, tb: 0.1, pa: 0.05, pb: [0.42], pc: 0.08, plate: 'green', lampW: 0.3, lampH: 0.14, drl: true, tailW: 0.14, noDriver: true,
+    extras: [roboRoof, (x) => slidingDoor(x.P, x.keys, 0.12, -0.95, x.bot + 0.12, x.yb)] }),
   taxiSedan: () => car({ rake: 0.04, L: 4.695, W: 1.695, rt: 0.32, wb: 2.68, axleShift: 0.09, rc: 0.1, sh: 0.05, yn: 0.72, zh: 1.95, yh: 0.82, yb: 0.9, zws0: 0.86, zws1: 0.16, yr: 1.5, zrw1: -0.88, zrw0: -1.38, yd: 0.9, zd: -2.1, yt: 0.88,
     tb: 0.12, pa: 0.06, pb: [0.5], bPaint: true, pc: 0.2, plate: 'green', lampW: 0.36, lampH: 0.15, lights: 'box', tailW: 0.3, grille: CHROME, chrome: true, lace: true, seat: rgb('#4a4f63'), wheel: 'cap',
     extras: [andon(...COMFORT_SIGN), (x) => fenderMirrors(x.P, x.hw - 0.12, 0.82, x.zf - 0.62)] }),
@@ -682,6 +706,7 @@ export const PAINT = {
   car: [['#f4f4f0', 22], ['#ecebe4', 10], ['#b9bdc2', 14], ['#1e1f24', 14], ['#5a5d63', 8], ['#2b3a55', 5], ['#a8232a', 4], ['#3f6fa5', 3], ['#c9b08a', 2], ['#6b4a3a', 2], ['#3d5a45', 2]],
   kei: [['#f4f4f0', 18], ['#ecebe4', 8], ['#b9bdc2', 8], ['#1e1f24', 8], ['#e8c3cf', 6], ['#b8d8e8', 6], ['#e8dcb0', 6], ['#9ccfb0', 4], ['#d9463b', 4], ['#f0a45a', 3], ['#3a4a66', 4], ['#7a5a48', 3]],
   taxi: [['#1f2a44', 1]],
+  robotaxi: [['#f3f5f4', 1]],
   taxiSedan: [['#f2c230', 4], ['#3f8f5b', 3], ['#e9853b', 2], ['#1e1f24', 3], ['#f4f4f0', 2]],
   work: [['#f4f4f0', 8], ['#d9dcde', 3], ['#2f64b5', 1]],
   bus: [['#f1ecdf', 1]],
@@ -691,4 +716,4 @@ export const PAINT = {
   delivery: [['#c8322e', 3], ['#f4f4f0', 2], ['#2f8a4a', 1], ['#f2a33a', 1]],
 };
 /** Number plate kind by model (the rest are private white plates). */
-export const PLATE_KIND = { keiWagon: 'kei', keiHatch: 'kei', keiTruck: 'kei', taxi: 'green', taxiSedan: 'green', bus: 'green', boxTruck: 'green' };
+export const PLATE_KIND = { keiWagon: 'kei', keiHatch: 'kei', keiTruck: 'kei', taxi: 'green', taxiSedan: 'green', robotaxi: 'green', bus: 'green', boxTruck: 'green' };
